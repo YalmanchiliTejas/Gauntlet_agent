@@ -1,0 +1,67 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Slack Web API (twin subset)", "version": "v1" },
+  "paths": {
+    "/chat.postMessage": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/PostInput" } },
+            "application/x-www-form-urlencoded": { "schema": { "$ref": "#/components/schemas/PostInput" } }
+          }
+        },
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PostResponse" } } } }
+        }
+      }
+    },
+    "/conversations.history": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HistoryResponse" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "PostInput": {
+        "type": "object",
+        "required": ["channel", "text"],
+        "properties": {
+          "channel": { "type": "string" },
+          "text": { "type": "string" }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "required": ["type", "text", "ts"],
+        "properties": {
+          "type": { "type": "string" },
+          "text": { "type": "string" },
+          "ts": { "type": "string" },
+          "channel": { "type": "string" }
+        }
+      },
+      "PostResponse": {
+        "type": "object",
+        "required": ["ok", "ts"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "channel": { "type": "string" },
+          "ts": { "type": "string" },
+          "message": { "$ref": "#/components/schemas/Message" }
+        }
+      },
+      "HistoryResponse": {
+        "type": "object",
+        "required": ["ok", "messages"],
+        "properties": {
+          "ok": { "type": "boolean" },
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } }
+        }
+      }
+    }
+  }
+}

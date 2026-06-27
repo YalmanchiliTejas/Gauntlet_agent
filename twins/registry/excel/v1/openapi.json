@@ -1,0 +1,68 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Microsoft Graph Excel (twin subset)", "version": "v1.0" },
+  "paths": {
+    "/v1.0/workbook/tables/{tableId}/rows": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RowInput" } } }
+        },
+        "responses": {
+          "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Row" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/RowList" } } } }
+        }
+      }
+    },
+    "/v1.0/workbook/worksheets": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WorksheetList" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "RowInput": {
+        "type": "object",
+        "required": ["values"],
+        "properties": { "values": { "type": "array" }, "index": { "type": ["integer", "null"] } }
+      },
+      "Row": {
+        "type": "object",
+        "required": ["index", "values"],
+        "properties": {
+          "id": { "type": "string" },
+          "index": { "type": "integer" },
+          "values": { "type": "array" },
+          "@odata.id": { "type": "string" }
+        }
+      },
+      "RowList": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "array", "items": { "$ref": "#/components/schemas/Row" } } }
+      },
+      "Worksheet": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "position": { "type": "integer" },
+          "visibility": { "type": "string" }
+        }
+      },
+      "WorksheetList": {
+        "type": "object",
+        "required": ["value"],
+        "properties": { "value": { "type": "array", "items": { "$ref": "#/components/schemas/Worksheet" } } }
+      }
+    }
+  }
+}

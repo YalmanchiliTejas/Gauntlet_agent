@@ -1,0 +1,5 @@
+{
+  "customers": [
+    { "id": "cus_seed", "object": "customer", "created": 1700000000, "livemode": false, "email": "platform@example.com", "name": "Platform Default" }
+  ]
+}

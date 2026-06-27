@@ -9,6 +9,8 @@ dependencies = [
     "httpx",
     "boto3",
     "pyjwt[crypto]",
+    "jsonschema",
+    "mitmproxy",
 ]
 
 # Run locally:  uvicorn gauntlet.app:app --reload --port 8000

@@ -26,12 +26,16 @@ _s3 = boto3.client("s3", region_name=config.AWS_REGION)
 _lambda = boto3.client("lambda", region_name=config.AWS_REGION)
 
 
+_HARNESS = Path(__file__).resolve().parent.parent / "sandbox" / "harness.py"
+
+
 def _zip_with_dockerfile(root: Path, dockerfile: str) -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("Dockerfile", dockerfile)
+        z.writestr(".gauntlet_harness.py", _HARNESS.read_text())  # the Dockerfile COPYs this
         for p in root.rglob("*"):
-            if p.is_file() and p.name != "Dockerfile":
+            if p.is_file() and p.name not in ("Dockerfile", ".gauntlet_harness.py"):
                 z.write(p, p.relative_to(root).as_posix())
     return buf.getvalue()
 
@@ -63,9 +67,16 @@ def build_image(key: str, name: str) -> str:
     raise TimeoutError("MicroVM image build timed out")
 
 
-def run(image_id: str) -> tuple[str, str]:
-    """Launch a MicroVM from the image. Returns (microvm_id, https_endpoint)."""
-    resp = _lambda.run_microvm(ImageId=image_id)
+def run(image_id: str, env: dict | None = None) -> tuple[str, str]:
+    """Launch a MicroVM from the image. Returns (microvm_id, https_endpoint).
+
+    `env` is injected into the VM so all egress goes through the sandbox proxy
+    (HTTPS_PROXY + CA). ponytail: exact param name is best-effort vs the live SDK.
+    """
+    kwargs = {"ImageId": image_id}
+    if env:
+        kwargs["Environment"] = {"Variables": env}
+    resp = _lambda.run_microvm(**kwargs)
     return resp["MicroVmId"], resp["Endpoint"]
 
 

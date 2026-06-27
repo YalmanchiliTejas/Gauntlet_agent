@@ -1,0 +1,67 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Twilio (twin subset)", "version": "2010-04-01" },
+  "paths": {
+    "/Messages": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/MessageInput" } },
+            "application/x-www-form-urlencoded": { "schema": { "$ref": "#/components/schemas/MessageInput" } }
+          }
+        },
+        "responses": {
+          "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Message" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageList" } } } }
+        }
+      }
+    },
+    "/Messages/{sid}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Message" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "MessageInput": {
+        "type": "object",
+        "required": ["To", "From", "Body"],
+        "properties": {
+          "To": { "type": "string" },
+          "From": { "type": "string" },
+          "Body": { "type": "string" }
+        }
+      },
+      "Message": {
+        "type": "object",
+        "required": ["id", "sid", "To", "From", "Body", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "sid": { "type": "string" },
+          "account_sid": { "type": "string" },
+          "To": { "type": "string" },
+          "From": { "type": "string" },
+          "Body": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      },
+      "MessageList": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } },
+          "page": { "type": "integer" },
+          "page_size": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

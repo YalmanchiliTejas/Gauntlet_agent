@@ -1,0 +1,5 @@
+{
+  "api.widgets.com": { "mode": "twin", "service": "widgets", "twin": "127.0.0.1:9100" },
+  "api.somevendor.com": { "mode": "record", "service": "somevendor" },
+  "api.trusted-internal.com": { "mode": "live" }
+}

@@ -1,0 +1,59 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "HubSpot CRM (twin subset)", "version": "v3" },
+  "paths": {
+    "/crm/v3/objects/contacts": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ContactInput" } } }
+        },
+        "responses": {
+          "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Contact" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ContactList" } } } }
+        }
+      }
+    },
+    "/crm/v3/objects/contacts/{id}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Contact" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ContactInput": {
+        "type": "object",
+        "required": ["properties"],
+        "properties": {
+          "properties": { "type": "object" }
+        }
+      },
+      "Contact": {
+        "type": "object",
+        "required": ["id", "properties"],
+        "properties": {
+          "id": { "type": "string" },
+          "properties": { "type": "object" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" },
+          "archived": { "type": "boolean" }
+        }
+      },
+      "ContactList": {
+        "type": "object",
+        "required": ["results"],
+        "properties": {
+          "results": { "type": "array", "items": { "$ref": "#/components/schemas/Contact" } },
+          "total": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

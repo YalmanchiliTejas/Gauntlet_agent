@@ -1,0 +1,53 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "GitHub Gists (twin subset)", "version": "v3" },
+  "paths": {
+    "/gists": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/GistInput" } } }
+        },
+        "responses": {
+          "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Gist" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Gist" } } } } }
+        }
+      }
+    },
+    "/gists/{id}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Gist" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "GistInput": {
+        "type": "object",
+        "required": ["files"],
+        "additionalProperties": false,
+        "properties": {
+          "description": { "type": "string" },
+          "public": { "type": "boolean" },
+          "files": { "type": "object" }
+        }
+      },
+      "Gist": {
+        "type": "object",
+        "required": ["id", "files"],
+        "properties": {
+          "id": { "type": "string" },
+          "description": { "type": "string" },
+          "public": { "type": "boolean" },
+          "files": { "type": "object" }
+        }
+      }
+    }
+  }
+}

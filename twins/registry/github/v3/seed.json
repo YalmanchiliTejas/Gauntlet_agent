@@ -1,0 +1,5 @@
+{
+  "gists": [
+    { "id": "gist_seed", "description": "platform default gist", "public": false, "files": { "hello.txt": { "content": "hi" } } }
+  ]
+}

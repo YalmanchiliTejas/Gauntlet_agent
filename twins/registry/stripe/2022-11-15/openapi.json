@@ -1,0 +1,129 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Stripe (twin subset)", "version": "2022-11-15" },
+  "paths": {
+    "/customers": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CustomerInput" } },
+            "application/x-www-form-urlencoded": { "schema": { "$ref": "#/components/schemas/CustomerInput" } }
+          }
+        },
+        "responses": {
+          "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CustomerList" } } } }
+        }
+      }
+    },
+    "/customers/{id}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Customer" } } } }
+        }
+      }
+    },
+    "/payment_intents": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/PaymentIntentInput" } },
+            "application/x-www-form-urlencoded": { "schema": { "$ref": "#/components/schemas/PaymentIntentInput" } }
+          }
+        },
+        "responses": {
+          "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentIntent" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentIntentList" } } } }
+        }
+      }
+    },
+    "/payment_intents/{id}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentIntent" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CustomerInput": {
+        "type": "object",
+        "required": ["email"],
+        "properties": {
+          "email": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "required": ["id", "object", "email"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "type": "string" },
+          "created": { "type": "integer" },
+          "livemode": { "type": "boolean" },
+          "email": { "type": "string" },
+          "name": { "type": "string" }
+        }
+      },
+      "PaymentIntentInput": {
+        "type": "object",
+        "required": ["amount", "currency"],
+        "properties": {
+          "amount": { "type": "integer" },
+          "currency": { "type": "string" },
+          "customer": { "type": "string" },
+          "payment_method": { "type": "string" },
+          "source": { "type": "string" },
+          "confirm": { "type": "boolean" }
+        }
+      },
+      "PaymentIntent": {
+        "type": "object",
+        "required": ["id", "object", "amount", "currency", "status"],
+        "properties": {
+          "id": { "type": "string" },
+          "object": { "type": "string" },
+          "created": { "type": "integer" },
+          "livemode": { "type": "boolean" },
+          "amount": { "type": "integer" },
+          "currency": { "type": "string" },
+          "customer": { "type": "string" },
+          "status": { "type": "string" }
+        }
+      },
+      "CustomerList": {
+        "type": "object",
+        "required": ["object", "data"],
+        "properties": {
+          "object": { "type": "string" },
+          "url": { "type": "string" },
+          "has_more": { "type": "boolean" },
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/Customer" } }
+        }
+      },
+      "PaymentIntentList": {
+        "type": "object",
+        "required": ["object", "data"],
+        "properties": {
+          "object": { "type": "string" },
+          "url": { "type": "string" },
+          "has_more": { "type": "boolean" },
+          "data": { "type": "array", "items": { "$ref": "#/components/schemas/PaymentIntent" } }
+        }
+      }
+    }
+  }
+}

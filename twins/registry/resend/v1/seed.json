@@ -1,0 +1,5 @@
+{
+  "emails": [
+    { "id": "email_seed", "from": "platform@example.com", "to": "user@example.com", "subject": "welcome", "html": "<p>hi</p>" }
+  ]
+}

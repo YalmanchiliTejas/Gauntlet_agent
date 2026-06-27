@@ -1,0 +1,5 @@
+{
+  "Messages": [
+    { "id": "SMseed", "sid": "SMseed", "account_sid": "ACseed", "To": "+15550000001", "From": "+15550000000", "Body": "platform default message", "status": "delivered" }
+  ]
+}

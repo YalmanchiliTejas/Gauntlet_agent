@@ -1,0 +1,71 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Google Calendar API (twin subset)", "version": "v3" },
+  "paths": {
+    "/calendar/v3/calendars/{calendarId}/events": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventInput" } } }
+        },
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Event" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EventList" } } } }
+        }
+      }
+    },
+    "/calendar/v3/calendars/{calendarId}/events/{eventId}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Event" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "TimePoint": {
+        "type": "object",
+        "properties": { "dateTime": { "type": "string" }, "date": { "type": "string" }, "timeZone": { "type": "string" } }
+      },
+      "EventInput": {
+        "type": "object",
+        "required": ["start", "end"],
+        "properties": {
+          "summary": { "type": "string" },
+          "description": { "type": "string" },
+          "start": { "$ref": "#/components/schemas/TimePoint" },
+          "end": { "$ref": "#/components/schemas/TimePoint" }
+        }
+      },
+      "Event": {
+        "type": "object",
+        "required": ["id", "status", "kind"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "type": "string" },
+          "kind": { "type": "string" },
+          "htmlLink": { "type": "string" },
+          "created": { "type": "string" },
+          "updated": { "type": "string" },
+          "summary": { "type": "string" },
+          "description": { "type": "string" },
+          "start": { "$ref": "#/components/schemas/TimePoint" },
+          "end": { "$ref": "#/components/schemas/TimePoint" }
+        }
+      },
+      "EventList": {
+        "type": "object",
+        "required": ["kind", "items"],
+        "properties": {
+          "kind": { "type": "string" },
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Event" } }
+        }
+      }
+    }
+  }
+}

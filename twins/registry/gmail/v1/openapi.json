@@ -1,0 +1,63 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Gmail API (twin subset)", "version": "v1" },
+  "paths": {
+    "/gmail/v1/users/{userId}/messages/send": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SendInput" } } }
+        },
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Message" } } } }
+        }
+      }
+    },
+    "/gmail/v1/users/{userId}/messages": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MessageList" } } } }
+        }
+      }
+    },
+    "/gmail/v1/users/{userId}/messages/{id}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Message" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SendInput": {
+        "type": "object",
+        "required": ["raw"],
+        "properties": { "raw": { "type": "string" }, "threadId": { "type": "string" } }
+      },
+      "Message": {
+        "type": "object",
+        "required": ["id", "threadId"],
+        "properties": {
+          "id": { "type": "string" },
+          "threadId": { "type": "string" },
+          "labelIds": { "type": "array", "items": { "type": "string" } },
+          "snippet": { "type": "string" }
+        }
+      },
+      "MessageRef": {
+        "type": "object",
+        "required": ["id", "threadId"],
+        "properties": { "id": { "type": "string" }, "threadId": { "type": "string" } }
+      },
+      "MessageList": {
+        "type": "object",
+        "required": ["messages"],
+        "properties": {
+          "messages": { "type": "array", "items": { "$ref": "#/components/schemas/MessageRef" } },
+          "resultSizeEstimate": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

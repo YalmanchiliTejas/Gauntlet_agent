@@ -1,0 +1,55 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Resend (twin subset)", "version": "v1" },
+  "paths": {
+    "/emails": {
+      "post": {
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EmailInput" } } }
+        },
+        "responses": {
+          "201": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Email" } } } }
+        }
+      },
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "type": "array", "items": { "$ref": "#/components/schemas/Email" } } } } }
+        }
+      }
+    },
+    "/emails/{id}": {
+      "get": {
+        "responses": {
+          "200": { "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Email" } } } }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "EmailInput": {
+        "type": "object",
+        "required": ["from", "to", "subject"],
+        "additionalProperties": false,
+        "properties": {
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "subject": { "type": "string" },
+          "html": { "type": "string" }
+        }
+      },
+      "Email": {
+        "type": "object",
+        "required": ["id", "from", "to", "subject"],
+        "properties": {
+          "id": { "type": "string" },
+          "from": { "type": "string" },
+          "to": { "type": "string" },
+          "subject": { "type": "string" },
+          "html": { "type": "string" }
+        }
+      }
+    }
+  }
+}
