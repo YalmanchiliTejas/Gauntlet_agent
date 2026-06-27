@@ -1,0 +1,14 @@
+[project]
+name = "gauntlet-agent"
+version = "0.1.0"
+description = "Run a customer's checked-out commit in an ephemeral AWS Lambda MicroVM, report via GitHub Checks."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "httpx",
+    "boto3",
+    "pyjwt[crypto]",
+]
+
+# Run locally:  uvicorn gauntlet.app:app --reload --port 8000
