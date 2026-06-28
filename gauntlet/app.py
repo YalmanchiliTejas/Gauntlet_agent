@@ -9,7 +9,9 @@ import time
 
 from fastapi import FastAPI, Header, HTTPException, Request
 
-from . import config, runner
+from . import config
+from .workflows.api_models import WorkflowGeneratePayload, model_to_dict
+from .workflows.generate import generate_workflows_json
 
 app = FastAPI()
 
@@ -49,6 +51,7 @@ async def github_webhook(
     body = await request.body()
     _verify_github(body, x_hub_signature_256)
     p = await request.json()
+    from . import runner
 
     if x_github_event == "push":
         if p.get("after", "").strip("0") == "":  # branch deleted
@@ -71,6 +74,8 @@ async def github_webhook(
 @app.post("/trigger")
 async def ui_trigger(payload: dict):
     """UI trigger. Body: {repo, sha, ref?, installation_id}."""
+    from . import runner
+
     try:
         job = runner.Job(payload["repo"], payload["sha"],
                          payload.get("ref", payload["sha"]),
@@ -79,6 +84,18 @@ async def ui_trigger(payload: dict):
         raise HTTPException(400, "need repo, sha, installation_id")
     runner.submit(job)
     return {"queued": True}
+
+
+@app.post("/workflows/generate")
+async def workflows_generate(payload: WorkflowGeneratePayload):
+    """Generate validated workflow drafts from docs, repo context, and service twins."""
+    payload_dict = model_to_dict(payload)
+    if not (payload_dict["docs"] or payload_dict["services"] or payload_dict["mcp_tools"]):
+        raise HTTPException(400, "provide docs, services, or MCP tools before generating workflows")
+    try:
+        return generate_workflows_json(payload_dict)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(400, str(exc))
 
 
 @app.post("/slack/command")
@@ -96,5 +113,7 @@ async def slack_command(
     if len(parts) != 3:
         return {"text": "usage: /gauntlet owner/repo <sha> <installation_id>"}
     repo, sha, inst = parts
+    from . import runner
+
     runner.submit(runner.Job(repo, sha, sha, int(inst)))
     return {"text": f"Queued run for {repo}@{sha[:7]}."}
