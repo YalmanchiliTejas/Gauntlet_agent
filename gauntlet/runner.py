@@ -69,12 +69,13 @@ async def _run(job: Job) -> None:
         plan = build_resolver.resolve(root)
 
         # Boot the egress world this run declared; default-deny everything else.
-        env = {}
+        env, ca_pem = {}, None
         if plan.twins:
             sandbox = Sandbox(plan.twins, plan.modes).start()
             env = sandbox.env_for_sandbox()
+            ca_pem = Path(sandbox.ca).read_bytes()  # bake the proxy CA into the image
 
-        key = microvm.upload_bundle(root, plan.dockerfile)
+        key = microvm.upload_bundle(root, plan.dockerfile, ca_pem=ca_pem)
         image_id = microvm.build_image(key, f"{job.repo.replace('/', '-')}-{job.sha[:7]}")
         microvm_id, endpoint = microvm.run(image_id, env=env)
 

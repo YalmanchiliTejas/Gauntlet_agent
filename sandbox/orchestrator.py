@@ -86,7 +86,9 @@ class Sandbox:
         # generates its CA into confdir on first run; the sandbox trusts self.ca.
         self.procs.append(subprocess.Popen(
             ["mitmdump", "-s", "proxy/addon.py", "--listen-port", str(proxy_port),
-             "--set", f"confdir={self.dir / 'mitm'}"],
+             "--set", f"confdir={self.dir / 'mitm'}",
+             # lazy: deny undeclared domains cleanly (don't dial upstream first)
+             "--set", "connection_strategy=lazy"],
             env={**os.environ, "ROUTING_TABLE": str(routing),
                  "FIXTURES_DIR": str(self.dir / "fixtures")}))
         self.proxy_url = f"http://127.0.0.1:{proxy_port}"
@@ -98,10 +100,15 @@ class Sandbox:
         return self
 
     def env_for_sandbox(self) -> dict:
-        """Inject into the VM so ALL egress goes through the proxy + trusts its CA."""
-        ca = str(self.ca)
+        """Inject into the VM so ALL egress goes through the proxy + trusts its CA.
+
+        The CA path is the in-VM location where the image places it (the runner
+        passes the CA bytes to microvm.upload_bundle), not the host path.
+        """
+        ca = "/gauntlet_ca.pem"  # matches microvm._CA_VM_PATH
         return {"HTTP_PROXY": self.proxy_url, "HTTPS_PROXY": self.proxy_url,
-                "REQUESTS_CA_BUNDLE": ca, "SSL_CERT_FILE": ca, "NODE_EXTRA_CA_CERTS": ca}
+                "REQUESTS_CA_BUNDLE": ca, "SSL_CERT_FILE": ca,
+                "NODE_EXTRA_CA_CERTS": ca, "CURL_CA_BUNDLE": ca}
 
     def teardown(self) -> None:
         for p in self.procs:
