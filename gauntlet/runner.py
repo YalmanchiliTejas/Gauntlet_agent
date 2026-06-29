@@ -42,13 +42,15 @@ def submit(job: Job) -> None:
     task.add_done_callback(lambda t: _inflight.pop(key, None))
 
 
-async def _poll_result(endpoint: str, timeout: float = 600) -> dict:
-    """Poll the in-VM harness until the command finishes (or we give up)."""
+async def _poll_result(endpoint: str, token: str, timeout: float = 600) -> dict:
+    """Poll the in-VM harness until the command finishes (or we give up).
+    Every MicroVM request needs the auth token."""
     deadline = asyncio.get_event_loop().time() + timeout
+    headers = {"X-aws-proxy-auth": token}
     async with httpx.AsyncClient(timeout=15) as c:
         while asyncio.get_event_loop().time() < deadline:
             try:
-                r = await c.get(f"{endpoint.rstrip('/')}/result")
+                r = await c.get(f"{endpoint.rstrip('/')}/result", headers=headers)
                 data = r.json()
                 if data.get("done"):
                     return data
@@ -75,11 +77,11 @@ async def _run(job: Job) -> None:
             env = sandbox.env_for_sandbox()
             ca_pem = Path(sandbox.ca).read_bytes()  # bake the proxy CA into the image
 
-        key = microvm.upload_bundle(root, plan.dockerfile, ca_pem=ca_pem)
+        key = microvm.upload_bundle(root, plan.dockerfile, ca_pem=ca_pem, env=env)
         image_id = microvm.build_image(key, f"{job.repo.replace('/', '-')}-{job.sha[:7]}")
-        microvm_id, endpoint = microvm.run(image_id, env=env)
+        microvm_id, endpoint, token = microvm.run(image_id)
 
-        result = await _poll_result(endpoint)
+        result = await _poll_result(endpoint, token)
         ok = result.get("exit_code") == 0
         summary = (f"`{plan.run}` exited {result.get('exit_code')}\n\n"
                    f"```\n{(result.get('stdout') or '')[-3000:]}\n"
