@@ -54,11 +54,12 @@ class Egress:
     def request(self, flow) -> None:
         from mitmproxy import http
         d = decide(flow.request.pretty_host, self.table)
+        flow.metadata["service"] = d.get("service", flow.request.pretty_host)
         if d["action"] == "deny":
+            flow.metadata["egress_mode"] = "deny"
             flow.response = http.Response.make(403, f"egress denied: {d['reason']}\n".encode())
             return
         flow.metadata["egress_mode"] = d["mode"]
-        flow.metadata["service"] = d["service"]
         if d["action"] == "twin":
             flow.request.scheme = "http"
             flow.request.host = d["host"]
@@ -66,6 +67,7 @@ class Egress:
         # forward: leave the request untouched, mitmproxy sends it to the real host
 
     def response(self, flow) -> None:
+        self._egress_log(flow)
         if flow.metadata.get("egress_mode") != "record":
             return
         # Log real traffic so we can grow / correct this service's twin fixtures.
@@ -81,6 +83,26 @@ class Egress:
             "response": flow.response.get_text(strict=False),
         }
         with (fixtures / f"{service}.jsonl").open("a") as f:
+            f.write(json.dumps(line) + "\n")
+
+    def _egress_log(self, flow) -> None:
+        """Ground truth for the judge's verifier: every egress attempt (any mode, incl.
+        denied). Lets the judge catch a tool_result that claims an action no call backs."""
+        path = os.environ.get("EGRESS_LOG")
+        if not path:
+            return
+        line = {
+            "ts": flow.request.timestamp_start or time.time(),
+            "service": flow.metadata.get("service"),
+            "mode": flow.metadata.get("egress_mode"),
+            "method": flow.request.method,
+            "url": flow.request.pretty_url,
+            "status": flow.response.status_code if flow.response else None,
+            # W3C trace context: carries the span id of the tool call that made this
+            # request, so the judge can join egress->tool exactly (no name guessing).
+            "traceparent": flow.request.headers.get("traceparent"),
+        }
+        with open(path, "a") as f:
             f.write(json.dumps(line) + "\n")
 
 

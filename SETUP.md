@@ -101,8 +101,28 @@ into the image), so once the VM can *reach* the proxy, HTTPS to the twins valida
 
 ---
 
+## 8. Judge — capturing the agent trajectory (customer's harness)
+The judge (`judge/`) reviews the agent's trajectory (reasoning + tool calls + results)
+and appends a verdict + recommendations to the check. Capture is automatic if the
+customer's agent is **OpenTelemetry-instrumented** — the runner bakes the OTel env so
+spans export to the in-VM harness (`http://127.0.0.1:8080/v1/traces`, `http/json`),
+which the runner then ingests. Nothing for the customer to change beyond having OTel on
+(e.g. `opentelemetry-instrument <their cmd>` or any framework's OTLP exporter).
+
+- **Native fallback:** an uninstrumented agent can instead write our trajectory JSONL
+  to `$TRAJECTORY_FILE` (`/gauntlet_trajectory.jsonl`); the harness serves it as-is.
+- **Use `http/json`**, not protobuf — the stdlib harness parses JSON. (Protobuf would
+  need a collector in the image; not wired.)
+- **Verification join:** the egress log is correlated to tool calls by the W3C
+  `traceparent` header, so keep OTel **context propagation on** (the default with
+  auto-instrumentation). The timestamp fallback is unreliable across the VM↔proxy
+  clock boundary; `traceparent` is not.
+- No LLM key (`GEMINI_API_KEY`/`OPENAI_API_KEY`/`GAUNTLET_PLANNER_API_KEY`)? The judge
+  still reports the deterministic findings (redundant/failed/fabricated calls).
+
 ## End-to-end smoke (after 5–7)
 1. Open a PR on an installed repo with a `.gauntlet.json`.
 2. Webhook → `{"queued": true}` → a **gauntlet** check appears on the PR.
 3. The MicroVM builds, runs `run` through the proxy (declared twins answer, undeclared
-   domains get 403), and the check reports pass/fail with the command output.
+   domains get 403), and the check reports pass/fail with the command output, plus the
+   **Judge** verdict + recommendations from the captured trajectory.

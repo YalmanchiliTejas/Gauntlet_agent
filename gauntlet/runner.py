@@ -5,6 +5,7 @@ proxy) -> build & run MicroVM through the proxy -> poll the harness result ->
 report via Checks -> terminate + teardown + delete source.
 """
 import asyncio
+import json
 import shutil
 import tempfile
 from dataclasses import dataclass
@@ -12,11 +13,35 @@ from pathlib import Path
 
 import httpx
 
+from judge import ingest
+from judge import judge as run_judge
 from sandbox.orchestrator import Sandbox
 
 from . import build_resolver, github, microvm
 
 CHECK_NAME = "gauntlet"
+_TRAJECTORY_VM_PATH = "/gauntlet_trajectory.jsonl"  # where a native-JSONL agent may write
+
+
+def _otel_env() -> dict:
+    """Point the customer's (OTel-instrumented) agent at the in-VM harness trace sink,
+    so we capture its trajectory with no change to their code."""
+    return {"OTEL_TRACES_EXPORTER": "otlp",
+            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/json",  # JSON so the stdlib harness can parse it
+            "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.0.0.1:8080/v1/traces",
+            "OTEL_SERVICE_NAME": "agent-under-test",
+            "TRAJECTORY_FILE": _TRAJECTORY_VM_PATH}
+
+
+def _format_judge(v: dict) -> str:
+    issues = v.get("issues") or []
+    head = f"\n\n**Judge: {v.get('verdict', '?')}** — {len(issues)} issue(s)"
+    if v.get("note"):
+        head += f" _({v['note']})_"
+    lines = [f"- [{i.get('severity', '?')}] {i.get('issue')}"
+             + (f" → {i['recommendation']}" if i.get("recommendation") else "")
+             for i in issues[:10]]
+    return head + ("\n" + "\n".join(lines) if lines else "")
 
 
 @dataclass
@@ -60,45 +85,74 @@ async def _poll_result(endpoint: str, token: str, timeout: float = 600) -> dict:
     return {"done": False, "exit_code": -1, "stderr": "timed out waiting for result"}
 
 
-async def _run(job: Job) -> None:
-    token = await github.installation_token(job.installation_id, job.repo)
-    check_id = await github.create_check_run(token, job.repo, job.sha, CHECK_NAME)
-    workdir = Path(tempfile.mkdtemp(prefix="gauntlet-"))
+async def _fetch_trajectory(endpoint: str, vm_token: str, workdir: Path) -> Path | None:
+    """Pull the agent trajectory from the harness into workdir/trajectory.jsonl (or None)."""
+    try:
+        async with httpx.AsyncClient(timeout=30) as c:
+            r = await c.get(f"{endpoint.rstrip('/')}/trajectory", headers={"X-aws-proxy-auth": vm_token})
+            traj = r.json()
+        path = workdir / "trajectory.jsonl"
+        if traj.get("native"):
+            path.write_text(traj["native"])
+        else:
+            steps = ingest.from_otlp_docs(traj.get("otlp") or [])
+            path.write_text("".join(json.dumps(s) + "\n" for s in steps))
+        return path if path.stat().st_size else None
+    except Exception:
+        return None
+
+
+async def run_and_judge(root: Path, plan, name: str, workdir: Path) -> dict:
+    """Build+run the agent in a MicroVM, capture result + trajectory, judge it, teardown.
+    Returns {"result", "verdict" (dict), "trajectory": Path|None}. Shared by the check runner
+    and the fixer's verification loop. Holds no GitHub token — vm_token stays local."""
     sandbox = None
     microvm_id = None
     try:
-        root = await github.download_source(token, job.repo, job.sha, workdir)
-        plan = build_resolver.resolve(root)
-
-        # Boot the egress world this run declared; default-deny everything else.
-        env, ca_pem = {}, None
+        env, ca_pem = _otel_env(), None  # always capture the agent trajectory
         if plan.twins:
             sandbox = Sandbox(plan.twins, plan.modes).start()
-            env = sandbox.env_for_sandbox()
+            env.update(sandbox.env_for_sandbox())
             ca_pem = Path(sandbox.ca).read_bytes()  # bake the proxy CA into the image
-
         key = microvm.upload_bundle(root, plan.dockerfile, ca_pem=ca_pem, env=env)
-        image_id = microvm.build_image(key, f"{job.repo.replace('/', '-')}-{job.sha[:7]}")
-        microvm_id, endpoint, token = microvm.run(image_id)
-
-        result = await _poll_result(endpoint, token)
-        ok = result.get("exit_code") == 0
-        summary = (f"`{plan.run}` exited {result.get('exit_code')}\n\n"
-                   f"```\n{(result.get('stdout') or '')[-3000:]}\n"
-                   f"{(result.get('stderr') or '')[-1000:]}\n```")
-        await github.complete_check_run(token, job.repo, check_id,
-                                        "success" if ok else "failure",
-                                        "Passed" if ok else "Failed", summary)
-    except asyncio.CancelledError:
-        await github.complete_check_run(token, job.repo, check_id, "cancelled",
-                                        "Superseded", "A newer push cancelled this run.")
-        raise
-    except Exception as e:  # report, don't swallow
-        await github.complete_check_run(token, job.repo, check_id, "failure",
-                                        "Run failed", f"```\n{e}\n```")
+        image_id = microvm.build_image(key, name)
+        microvm_id, endpoint, vm_token = microvm.run(image_id)
+        result = await _poll_result(endpoint, vm_token)
+        tpath = await _fetch_trajectory(endpoint, vm_token, workdir)
+        verdict = (run_judge(str(tpath), egress_log=str(sandbox.egress_log) if sandbox else None,
+                             services=set(plan.twins))
+                   if tpath else {"verdict": "n/a", "issues": [], "note": "no trajectory captured"})
+        return {"result": result, "verdict": verdict, "trajectory": tpath}
     finally:
         if microvm_id:
             microvm.terminate(microvm_id)
         if sandbox:
             sandbox.teardown()
+
+
+async def _run(job: Job) -> None:
+    gh_token = await github.installation_token(job.installation_id, job.repo)
+    check_id = await github.create_check_run(gh_token, job.repo, job.sha, CHECK_NAME)
+    workdir = Path(tempfile.mkdtemp(prefix="gauntlet-"))
+    try:
+        root = await github.download_source(gh_token, job.repo, job.sha, workdir)
+        plan = build_resolver.resolve(root)
+        out = await run_and_judge(root, plan, f"{job.repo.replace('/', '-')}-{job.sha[:7]}", workdir)
+        result = out["result"]
+        ok = result.get("exit_code") == 0
+        summary = (f"`{plan.run}` exited {result.get('exit_code')}\n\n"
+                   f"```\n{(result.get('stdout') or '')[-3000:]}\n"
+                   f"{(result.get('stderr') or '')[-1000:]}\n```"
+                   f"{_format_judge(out['verdict'])}")
+        await github.complete_check_run(gh_token, job.repo, check_id,
+                                        "success" if ok else "failure",
+                                        "Passed" if ok else "Failed", summary)
+    except asyncio.CancelledError:
+        await github.complete_check_run(gh_token, job.repo, check_id, "cancelled",
+                                        "Superseded", "A newer push cancelled this run.")
+        raise
+    except Exception as e:  # report, don't swallow
+        await github.complete_check_run(gh_token, job.repo, check_id, "failure",
+                                        "Run failed", f"```\n{e}\n```")
+    finally:
         shutil.rmtree(workdir, ignore_errors=True)  # don't persist source

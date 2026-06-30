@@ -52,6 +52,44 @@ async def download_source(token: str, repo: str, sha: str, dest: Path) -> Path:
     return next(p for p in dest.iterdir() if p.is_dir())
 
 
+async def create_branch(token: str, repo: str, branch: str, from_sha: str) -> None:
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(f"{API}/repos/{repo}/git/refs",
+                         headers={"Authorization": f"Bearer {token}"},
+                         json={"ref": f"refs/heads/{branch}", "sha": from_sha})
+        if r.status_code not in (201, 422):  # 422 = already exists; tolerate re-runs
+            r.raise_for_status()
+
+
+async def _file_sha(c: httpx.AsyncClient, token: str, repo: str, path: str, ref: str) -> str | None:
+    r = await c.get(f"{API}/repos/{repo}/contents/{path}", params={"ref": ref},
+                    headers={"Authorization": f"Bearer {token}"})
+    return r.json().get("sha") if r.status_code == 200 else None
+
+
+async def put_file(token: str, repo: str, branch: str, path: str, content: bytes, message: str) -> None:
+    """Create/update one file on `branch` (Contents:write). Commits per file — fine for small fixes."""
+    import base64
+    async with httpx.AsyncClient(timeout=20) as c:
+        sha = await _file_sha(c, token, repo, path, branch)
+        body = {"message": message, "branch": branch,
+                "content": base64.b64encode(content).decode()}
+        if sha:
+            body["sha"] = sha
+        r = await c.put(f"{API}/repos/{repo}/contents/{path}",
+                        headers={"Authorization": f"Bearer {token}"}, json=body)
+        r.raise_for_status()
+
+
+async def open_pr(token: str, repo: str, head: str, base: str, title: str, body: str) -> str:
+    async with httpx.AsyncClient(timeout=15) as c:
+        r = await c.post(f"{API}/repos/{repo}/pulls",
+                         headers={"Authorization": f"Bearer {token}"},
+                         json={"title": title, "head": head, "base": base, "body": body})
+        r.raise_for_status()
+        return r.json()["html_url"]
+
+
 async def create_check_run(token: str, repo: str, sha: str, name: str) -> int:
     async with httpx.AsyncClient(timeout=15) as c:
         r = await c.post(

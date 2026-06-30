@@ -63,6 +63,7 @@ class Sandbox:
         self.dir = Path(tempfile.mkdtemp(prefix="sandbox-"))
         self.proxy_url = ""
         self.ca = self.dir / "mitm" / "mitmproxy-ca-cert.pem"
+        self.egress_log = self.dir / "egress.jsonl"  # ground truth for the judge's verifier
 
     def start(self) -> "Sandbox":
         ports = {}
@@ -90,7 +91,8 @@ class Sandbox:
              # lazy: deny undeclared domains cleanly (don't dial upstream first)
              "--set", "connection_strategy=lazy"],
             env={**os.environ, "ROUTING_TABLE": str(routing),
-                 "FIXTURES_DIR": str(self.dir / "fixtures")}))
+                 "FIXTURES_DIR": str(self.dir / "fixtures"),
+                 "EGRESS_LOG": str(self.egress_log)}))
         self.proxy_url = f"http://127.0.0.1:{proxy_port}"
 
         # Wait for the proxy port + the generated CA so the sandbox can trust it.

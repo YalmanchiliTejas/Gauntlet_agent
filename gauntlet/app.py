@@ -59,9 +59,17 @@ async def github_webhook(
         job = runner.Job(p["repository"]["full_name"], p["after"],
                          p["ref"], p["installation"]["id"])
     elif x_github_event == "pull_request":
+        pr = p["pull_request"]
+        # Manual opt-in: labeling a PR `gauntlet-fix` runs the find-and-fix loop.
+        # ref carries the PR head branch so the fix PR can target it.
+        if p["action"] == "labeled" and p.get("label", {}).get("name") == "gauntlet-fix":
+            from . import fix  # thin shim re-exporting fixer.job (keeps gauntlet/ self-contained)
+
+            fix.submit(runner.Job(p["repository"]["full_name"], pr["head"]["sha"],
+                                  pr["head"]["ref"], p["installation"]["id"]))
+            return {"queued": "fix"}
         if p["action"] not in ("opened", "synchronize", "reopened"):
             return {"skipped": p["action"]}
-        pr = p["pull_request"]
         job = runner.Job(p["repository"]["full_name"], pr["head"]["sha"],
                          f"pr/{pr['number']}", p["installation"]["id"])
     else:
