@@ -122,6 +122,10 @@ class WorkflowDraft:
     difficulty: WorkflowDifficulty
     cleanup_required: bool = False
     target_interfaces: list[str] = field(default_factory=list)
+    test_fixtures: dict[str, Any] = field(default_factory=dict)
+    expected_artifacts: list[str] = field(default_factory=list)
+    quality_badges: list[str] = field(default_factory=list)
+    run_readiness: dict[str, Any] = field(default_factory=dict)
     execution_harness: str = "gauntlet-native"
     compatible_harnesses: list[str] = field(
         default_factory=lambda: ["gauntlet-native", "external-mcp-agent"]
@@ -149,11 +153,22 @@ class HarnessCheck:
 
 
 @dataclass(slots=True)
+class HarnessDefect:
+    code: str
+    message: str
+    severity: Literal["error", "warning"] = "error"
+    suggested_fix: str = ""
+
+
+@dataclass(slots=True)
 class HarnessDryRunResult:
     workflow_name: str
     feasible: bool
     score: int
     checks: list[HarnessCheck] = field(default_factory=list)
+    defects: list[HarnessDefect] = field(default_factory=list)
+    readiness: dict[str, Any] = field(default_factory=dict)
+    risk_level: Literal["low", "medium", "high"] = "medium"
     notes: list[str] = field(default_factory=list)
 
 
@@ -174,6 +189,10 @@ class CoverageReport:
     uncovered_services: list[str] = field(default_factory=list)
     rejected_candidates: list[RejectedWorkflow] = field(default_factory=list)
     harness_results: list[HarnessDryRunResult] = field(default_factory=list)
+    suite_narrative: str = ""
+    catches: list[str] = field(default_factory=list)
+    gaps: list[str] = field(default_factory=list)
+    coverage_matrix: list[dict[str, Any]] = field(default_factory=list)
     summary: str = ""
 
 
@@ -191,6 +210,7 @@ class WorkflowGenerationRequest:
     planner: PlannerMode = "auto"
     planner_model: str | None = None
     repair_attempts: int = 1
+    combine_rule_candidates: bool = True
 
 
 @dataclass(slots=True)

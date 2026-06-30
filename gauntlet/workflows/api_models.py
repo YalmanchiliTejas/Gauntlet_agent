@@ -53,6 +53,7 @@ class WorkflowGeneratePayload(BaseModel):
     planner: Literal["auto", "rules", "llm"] = "auto"
     planner_model: str | None = None
     repair_attempts: int = Field(default=1, ge=0, le=3)
+    combine_rule_candidates: bool = True
 
 
 def model_to_dict(model: BaseModel) -> dict[str, Any]:

@@ -147,13 +147,13 @@ Example:
       "inputs": ["url", "profile_id?"],
       "outputs": ["session_id"],
       "side_effects": ["creates_session"],
-      "prerequisites": ["STEEL_API_KEY"],
+      "prerequisites": ["PRODUCT_API_KEY"],
       "evidence": ["200 response", "returned session id"]
     }
   ],
   "entities": ["session", "profile", "scrape result", "file artifact"],
   "dangerous_operations": ["delete", "send email", "charge card"],
-  "auth_requirements": ["STEEL_API_KEY"]
+  "auth_requirements": ["PRODUCT_API_KEY"]
 }
 ```
 

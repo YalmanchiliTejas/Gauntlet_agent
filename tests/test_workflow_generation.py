@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -10,11 +11,14 @@ from fastapi.testclient import TestClient
 from gauntlet.app import app
 from gauntlet.workflows.generate import generate_workflows, parse_request
 from gauntlet.workflows import llm_planner
+from gauntlet.workflows.harness import GauntletNativeDryRunScorer
 from gauntlet.workflows.llm_planner import LLMPlanner
 from gauntlet.workflows.probe import build_surface_map, parse_docs, parse_repo
 from gauntlet.workflows.service_map import build_service_map
 from gauntlet.workflows.schema import (
+    Capability,
     EgressRule,
+    ProductSurfaceMap,
     SeedDataRequirement,
     ServiceDependency,
     ServiceMap,
@@ -41,16 +45,16 @@ Use SUPPORT_API_KEY for product API calls.
 """
 
 
-STEEL_DOCS = """
-# Steel Documentation
-Steel is a cloud browser API for AI agents and developers.
-Use Steel to launch cloud browsers, scrape content, and automate web tasks.
+BROWSER_AUTOMATION_DOCS = """
+# Cloud Browser Product Documentation
+Cloud Browser is an API for agents and developers.
+Use Cloud Browser to launch hosted browser sessions, scrape content, and automate web tasks.
 
 ## Quick Reference
-- Install: `npm install steel-sdk` or `pip install steel-sdk`
-- CLI: `steel scrape https://example.com`
-- Auth env var: `STEEL_API_KEY`
-- API base URL: `https://api.steel.dev`
+- Install: `npm install cloud-browser-sdk` or `pip install cloud-browser-sdk`
+- CLI: `browserctl scrape https://example.com`
+- Auth env var: `PRODUCT_API_KEY`
+- API base URL: `https://api.example-browser.test`
 
 ## Agent Instructions
 For browser automation, connect Puppeteer or Playwright via WebSocket.
@@ -64,7 +68,37 @@ Reuse browser context, auth, cookies, extensions, credentials, and browser setti
 Upload, download, manage and work with files within an active session.
 
 ## Agent Traces
-Fetch the activity timeline for a Steel browser session as JSON and summarize trace events.
+Fetch the activity timeline for a browser session as JSON and summarize trace events.
+"""
+
+
+PAYMENTS_DOCS = """
+# LedgerPay API
+LedgerPay lets support agents inspect invoices, create refunds, and review audit events.
+
+## API Reference
+- Auth env var: `LEDGERPAY_API_KEY`
+- API base URL: `https://api.ledgerpay.test`
+- Create a refund for an invoice after reading invoice status.
+- Get invoice details by invoice id.
+- Upload refund evidence files to the refund record.
+- List audit events for a refund and cite event timestamps.
+- Delete a draft refund when verification fails.
+"""
+
+
+ISSUE_TRACKER_DOCS = """
+# TaskTrack CLI
+TaskTrack is an issue tracker for engineering teams.
+
+## Commands
+- Auth env var: `TASKTRACK_TOKEN`
+- API base URL: `https://api.tasktrack.test`
+- CLI: `tasktrack issue create --title <title>`
+- CLI: `tasktrack issue get --id <issue_id>`
+- Update ticket status and add a comment.
+- Search issues by label and assignee.
+- Export issue history events as JSON.
 """
 
 
@@ -261,24 +295,39 @@ class WorkflowGenerationTests(unittest.TestCase):
                 self.assertEqual(rule.mode, "twin")
                 self.assertTrue(rule.domain.endswith(".local"))
 
-    def test_steel_docs_generate_specific_product_workflows_without_llm(self) -> None:
+    def test_browser_docs_generate_generic_product_workflows_without_llm(self) -> None:
         response = generate_workflows(
             {
-                "docs": [{"title": "steel-llms-full.txt", "text": STEEL_DOCS}],
-                "declared_secrets": ["STEEL_API_KEY"],
+                "docs": [{"title": "browser-product-docs.md", "text": BROWSER_AUTOMATION_DOCS}],
+                "declared_secrets": ["PRODUCT_API_KEY"],
                 "coverage": {"count": 5},
                 "planner": "rules",
             }
         )
         names = [workflow.name for workflow in response.workflows]
-        self.assertIn("Create, use, and release a Steel browser session with Playwright", names)
-        self.assertIn("Compare Steel direct scrape paths across CLI and API", names)
-        self.assertIn("Verify Steel profile reuse and authenticated browser context", names)
-        self.assertIn("Move a file through a Steel browser session", names)
-        self.assertIn("Fetch and summarize a Steel agent trace after a browser run", names)
-        self.assertNotIn("Verify Use Steel to launch cloud browsers, scrape content, and automate web tasks", names)
-        self.assertEqual(response.coverage_report.covered_surface_areas, ["Agent Traces", "Browser Tools", "Files API", "Profiles API", "Sessions API"])
+        joined_names = " ".join(names).lower()
+        self.assertIn("clean up", joined_names)
+        self.assertTrue("retrieve" in joined_names or "scrape" in joined_names)
+        self.assertIn("artifact", joined_names)
+        self.assertIn("observability", joined_names)
+        self.assertIn("primary_api", response.coverage_report.covered_services)
+        self.assertIn("api.example-browser.test", [service.domain for service in response.service_map.services])
+        self.assertIn("Agent Traces", response.coverage_report.covered_surface_areas)
+        self.assertIn("Files API", response.coverage_report.covered_surface_areas)
         self.assertEqual(response.coverage_report.covered_interfaces, ["browser", "cli", "rest", "sdk:python"])
+
+    def test_docs_and_count_only_are_enough_for_user_facing_generation(self) -> None:
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "", "GAUNTLET_PLANNER_API_KEY": "", "OPENAI_API_KEY": ""}, clear=False):
+            response = generate_workflows(
+                {
+                    "docs": [{"title": "browser-product-docs.md", "text": BROWSER_AUTOMATION_DOCS}],
+                    "coverage": {"count": 3},
+                }
+            )
+
+        self.assertEqual(len(response.workflows), 3)
+        self.assertTrue(response.coverage_report.covered_surface_areas)
+        self.assertTrue(all(len(workflow.rubric) >= 3 for workflow in response.workflows))
 
     def test_llm_planner_accepts_specific_high_quality_candidate(self) -> None:
         payload = request_payload()
@@ -292,7 +341,7 @@ class WorkflowGenerationTests(unittest.TestCase):
                 "workflows": [
                     {
                         "name": "Run browser session and verify support refund state",
-                        "description": "Exercises a realistic Steel-style browser workflow across support service twins.",
+                        "description": "Exercises a realistic product-style browser workflow across support service twins.",
                         "audience": "agent_builder",
                         "workflow_type": "agent_under_test",
                         "surface_area": surface_map.capabilities[0].surface_area,
@@ -342,6 +391,389 @@ class WorkflowGenerationTests(unittest.TestCase):
         self.assertEqual(len(workflows[0].services), 3)
         response = generate_workflows({**payload, "planner": "rules"})
         self.assertTrue(response.coverage_report.harness_results)
+
+    def test_llm_mode_combines_rule_candidates_and_expands_thin_rubrics(self) -> None:
+        payload = {
+            "docs": [{"title": "browser-product-docs.md", "text": BROWSER_AUTOMATION_DOCS}],
+            "declared_secrets": ["PRODUCT_API_KEY"],
+            "coverage": {"count": 5},
+            "planner": "llm",
+            "combine_rule_candidates": True,
+            "repair_attempts": 0,
+        }
+
+        def fake_send(prompt: str) -> str:
+            self.assertIn("Generate", prompt)
+            return json.dumps(
+                {
+                    "workflows": [
+                        {
+                            "name": "Thin rubric JS session workflow",
+                            "description": "Creates a browser session with JavaScript and captures browser evidence.",
+                            "audience": "agent_builder",
+                            "workflow_type": "agent_under_test",
+                            "surface_area": "JavaScript SDK",
+                            "product_capabilities": ["Use Cloud Browser to launch hosted browser sessions, scrape content, and automate web tasks"],
+                            "target_interfaces": ["sdk:javascript", "browser"],
+                            "services": ["primary_api"],
+                            "task_prompt": "Using the JavaScript SDK and Puppeteer, create a Cloud Browser browser session, connect to it, navigate to https://example.com, capture a screenshot artifact, release the session, and report the evidence.",
+                            "required_secrets": ["PRODUCT_API_KEY"],
+                            "egress_policy": [{"domain": "api.example-browser.test", "mode": "twin", "service": "primary_api"}],
+                            "seed_data": [],
+                            "test_fixtures": {
+                                "target_url": "https://example.com",
+                                "expected_title_contains": "Example Domain",
+                                "create_operations": ["client.sessions.create()"],
+                                "use_operations": ["chromium.connectOverCDP()", "page.goto('https://example.com')"],
+                                "cleanup_operations": ["client.sessions.release(session.id)"],
+                            },
+                            "expected_artifacts": ["session_id", "screenshot", "release_response"],
+                            "expected_state_transitions": ["A browser session is created, used, released, and post-release state shows it is no longer active."],
+                            "success_conditions": [
+                                {"description": "The session creation API returned an id.", "evidence": "api_response"},
+                                {"description": "A screenshot artifact from https://example.com was captured.", "evidence": "artifact"},
+                                {"description": "The release response or post-release lookup proves the created session id is no longer active.", "evidence": "api_response"},
+                            ],
+                            "rubric": ["The workflow creates, uses, and releases a browser session."],
+                            "failure_modes_tested": ["session lifecycle", "artifact verification", "cleanup verification"],
+                            "difficulty": "hard",
+                            "cleanup_required": True,
+                        }
+                    ]
+                }
+            )
+
+        with patch.object(llm_planner, "_send_prompt", side_effect=fake_send):
+            response = generate_workflows(payload)
+
+        names = [workflow.name for workflow in response.workflows]
+        self.assertIn("Thin rubric JS session workflow", names)
+        self.assertTrue(
+            any(
+                "documented" in name.lower()
+                or "retrieve" in name.lower()
+                or "observability" in name.lower()
+                for name in names
+            )
+        )
+        thin = next(workflow for workflow in response.workflows if workflow.name == "Thin rubric JS session workflow")
+        self.assertGreaterEqual(len(thin.rubric), 3)
+
+    def test_llm_unknown_refs_remain_visible_for_validation(self) -> None:
+        payload = {
+            "docs": [{"title": "browser-product-docs.md", "text": BROWSER_AUTOMATION_DOCS}],
+            "declared_secrets": ["PRODUCT_API_KEY"],
+            "coverage": {"count": 3},
+            "planner": "llm",
+            "combine_rule_candidates": False,
+            "repair_attempts": 0,
+        }
+
+        def fake_send(_: str) -> str:
+            return json.dumps(
+                {
+                    "workflows": [
+                        {
+                            "name": "Hallucinated service workflow",
+                            "description": "Should be rejected instead of silently sanitized.",
+                            "audience": "agent_builder",
+                            "workflow_type": "agent_under_test",
+                            "surface_area": "Unknown",
+                            "product_capabilities": ["made up capability"],
+                            "target_interfaces": ["rest"],
+                            "services": ["notion"],
+                            "task_prompt": "Using the REST API, create a fake record through a hallucinated service and verify it with a concrete response artifact.",
+                            "required_secrets": ["PRODUCT_API_KEY"],
+                            "egress_policy": [{"domain": "api.example-browser.test", "mode": "twin", "service": "primary_api"}],
+                            "seed_data": [],
+                            "expected_state_transitions": ["A fake record is created."],
+                            "success_conditions": [
+                                {"description": "The API response contains status 200.", "evidence": "api_response"},
+                                {"description": "The transcript names the REST call.", "evidence": "transcript"},
+                                {"description": "The artifact contains the returned id.", "evidence": "artifact"},
+                            ],
+                            "rubric": ["Uses real docs.", "Uses declared routes.", "Verifies concrete evidence."],
+                            "failure_modes_tested": ["hallucinated integration"],
+                            "difficulty": "core",
+                        }
+                    ]
+                }
+            )
+
+        with patch.object(llm_planner, "_send_prompt", side_effect=fake_send):
+            response = generate_workflows(payload)
+
+        self.assertFalse(response.workflows)
+        rejected_codes = {issue.code for item in response.coverage_report.rejected_candidates for issue in item.reasons}
+        self.assertIn("unknown_service", rejected_codes)
+        self.assertIn("unknown_capability", rejected_codes)
+
+    def test_docs_domains_are_not_implicitly_approved_as_egress(self) -> None:
+        request = parse_request(
+            {
+                "docs": [{"title": "docs.md", "text": "Call https://api.example.com with EXAMPLE_API_KEY."}],
+                "declared_secrets": ["EXAMPLE_API_KEY"],
+            }
+        )
+
+        self.assertEqual(request.egress_domains, [])
+
+    def test_browser_workflows_have_routes_fixtures_and_oracles(self) -> None:
+        response = generate_workflows(
+            {
+                "docs": [{"title": "browser-product-docs.md", "text": BROWSER_AUTOMATION_DOCS}],
+                "declared_secrets": ["PRODUCT_API_KEY"],
+                "coverage": {"count": 5},
+                "planner": "rules",
+            }
+        )
+
+        self.assertIn("primary_api", response.coverage_report.covered_services)
+        for workflow in response.workflows:
+            self.assertTrue(workflow.test_fixtures)
+            self.assertTrue(workflow.expected_artifacts)
+            self.assertTrue(workflow.run_readiness)
+            self.assertTrue(any(rule.domain == "api.example-browser.test" and rule.mode == "twin" for rule in workflow.egress_policy))
+            if workflow.cleanup_required:
+                cleanup_text = " ".join(
+                    [workflow.task_prompt]
+                    + workflow.expected_state_transitions
+                    + [condition.description for condition in workflow.success_conditions]
+                ).lower()
+                self.assertTrue(
+                    "post-release" in cleanup_text
+                    or "post-cleanup" in cleanup_text
+                    or "no longer active" in cleanup_text
+                    or "release response" in cleanup_text
+                    or "cleanup response" in cleanup_text
+                )
+
+    def test_rules_prompts_include_concrete_documented_operations(self) -> None:
+        response = generate_workflows(
+            {
+                "docs": [{"title": "browser-product-docs.md", "text": BROWSER_AUTOMATION_DOCS}],
+                "declared_secrets": ["PRODUCT_API_KEY"],
+                "coverage": {"count": 5},
+                "planner": "rules",
+            }
+        )
+        prompts = "\n".join(workflow.task_prompt for workflow in response.workflows)
+
+        self.assertTrue(
+            "client.sessions.create()" in prompts
+            or "sessions.create()" in prompts
+        )
+        self.assertTrue(
+            "/v1/scrape" in prompts
+            or "client.scrape()" in prompts
+            or "browserctl scrape" in prompts
+        )
+        self.assertNotIn("Using a documented rest, browser interface", prompts)
+        lifecycle = next(workflow for workflow in response.workflows if workflow.name.startswith("Create, use, and clean up"))
+        self.assertNotIn("client.sessions.create()", lifecycle.test_fixtures.get("cleanup_operations", []))
+        self.assertTrue(any("release" in operation.lower() or "close" in operation.lower() for operation in lifecycle.test_fixtures.get("cleanup_operations", [])))
+
+    def test_workflow_generator_has_no_product_specific_runtime_strings(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        scanned = []
+        for path in (root / "gauntlet" / "workflows").glob("*.py"):
+            scanned.append(path.read_text())
+        scanned.append((root / "scripts" / "generate_workflows.py").read_text())
+        joined = "\n".join(scanned).lower()
+
+        forbidden_terms = (
+            "st" + "eel",
+            "st" + "eel_api",
+            "api." + "st" + "eel.dev",
+        )
+        for forbidden in forbidden_terms:
+            self.assertNotIn(forbidden, joined)
+
+    def test_generic_first_party_api_inference_from_any_base_url(self) -> None:
+        response = generate_workflows(
+            {
+                "docs": [{"title": "payments.md", "text": PAYMENTS_DOCS}],
+                "declared_secrets": ["LEDGERPAY_API_KEY"],
+                "coverage": {"count": 4},
+                "planner": "rules",
+            }
+        )
+
+        self.assertEqual(response.service_map.services[0].name, "primary_api")
+        self.assertEqual(response.service_map.services[0].domain, "api.ledgerpay.test")
+        self.assertIn("primary_api", response.coverage_report.covered_services)
+        self.assertTrue(all(workflow.test_fixtures for workflow in response.workflows))
+        self.assertTrue(all(workflow.expected_artifacts for workflow in response.workflows))
+
+    def test_non_browser_product_docs_generate_quality_workflows(self) -> None:
+        for title, docs, secret, domain in [
+            ("payments.md", PAYMENTS_DOCS, "LEDGERPAY_API_KEY", "api.ledgerpay.test"),
+            ("issues.md", ISSUE_TRACKER_DOCS, "TASKTRACK_TOKEN", "api.tasktrack.test"),
+        ]:
+            response = generate_workflows(
+                {
+                    "docs": [{"title": title, "text": docs}],
+                    "declared_secrets": [secret],
+                    "coverage": {"count": 4},
+                    "planner": "rules",
+                }
+            )
+            self.assertGreaterEqual(len(response.workflows), 3)
+            self.assertIn(domain, [service.domain for service in response.service_map.services])
+            self.assertTrue(response.coverage_report.coverage_matrix)
+            self.assertTrue(any("artifact" in workflow.quality_badges or workflow.expected_artifacts for workflow in response.workflows))
+            self.assertTrue(any("false success" in " ".join(workflow.failure_modes_tested).lower() for workflow in response.workflows))
+
+    def test_coverage_report_has_matrix_and_suite_context(self) -> None:
+        response = generate_workflows(request_payload())
+
+        self.assertTrue(response.coverage_report.suite_narrative)
+        self.assertTrue(response.coverage_report.coverage_matrix)
+        self.assertTrue(response.coverage_report.catches)
+        self.assertIsInstance(response.coverage_report.gaps, list)
+
+    def test_harness_blocks_missing_concrete_operations(self) -> None:
+        workflow = WorkflowDraft(
+            name="Generic API lifecycle",
+            description="Looks concrete but has no documented operation binding.",
+            audience="agent_builder",
+            workflow_type="agent_under_test",
+            surface_area="REST API",
+            product_capabilities=["Create and verify records"],
+            services=[ServiceDependency(name="primary_api", mode="twin", domain="api.product.test")],
+            task_prompt="Using the REST API, create a record, verify the response artifact, clean up the record, and report the observed status.",
+            required_secrets=["PRODUCT_API_KEY"],
+            egress_policy=[EgressRule(domain="api.product.test", mode="twin", service="primary_api")],
+            seed_data=[],
+            expected_state_transitions=["A record is created and then cleaned up."],
+            success_conditions=[
+                SuccessCondition("The API response contains status 201.", "api_response"),
+                SuccessCondition("The created record id appears in the artifact.", "artifact"),
+                SuccessCondition("The post-cleanup lookup returns status 404.", "api_response"),
+            ],
+            rubric=["Creates state.", "Verifies state.", "Cleans up state."],
+            failure_modes_tested=["false success"],
+            difficulty="core",
+            cleanup_required=True,
+            target_interfaces=["rest"],
+            test_fixtures={"record_name": "gauntlet-test-record"},
+            expected_artifacts=["created_record_id", "post_cleanup_status"],
+        )
+
+        result = GauntletNativeDryRunScorer().score(
+            workflow,
+            ProductSurfaceMap(
+                interfaces=["rest"],
+                capabilities=[Capability(name="Create and verify records", surface_area="REST API", interfaces=["rest"])],
+            ),
+            ServiceMap(services=workflow.services),
+        )
+
+        self.assertFalse(result.feasible)
+        self.assertFalse(result.readiness["ready"])
+        self.assertIn("missing_concrete_operation", {defect.code for defect in result.defects})
+
+    def test_harness_detects_incompatible_operation_chains(self) -> None:
+        workflow = WorkflowDraft(
+            name="Mixed resource lifecycle",
+            description="Creates unrelated resources in one lifecycle workflow.",
+            audience="agent_builder",
+            workflow_type="agent_under_test",
+            surface_area="REST API",
+            product_capabilities=["Manage CRM records"],
+            services=[],
+            task_prompt="Using the REST API, create a contact and a deal, verify their responses, then delete the contact and report cleanup evidence.",
+            required_secrets=[],
+            egress_policy=[],
+            seed_data=[],
+            expected_state_transitions=["A contact and deal are created, then the contact is deleted."],
+            success_conditions=[
+                SuccessCondition("POST /v1/contacts returns status 201.", "api_response"),
+                SuccessCondition("POST /v1/deals returns status 201.", "api_response"),
+                SuccessCondition("DELETE /v1/contacts/{contact_id} returns status 204.", "api_response"),
+            ],
+            rubric=["Uses documented endpoints.", "Does not mix identifiers.", "Verifies cleanup."],
+            failure_modes_tested=["resource mismatch"],
+            difficulty="hard",
+            cleanup_required=True,
+            target_interfaces=["rest"],
+            test_fixtures={
+                "create_operations": ["POST /v1/contacts", "POST /v1/deals"],
+                "cleanup_operations": ["DELETE /v1/contacts/{contact_id}"],
+                "contact_email": "gauntlet-contact@example.test",
+            },
+            expected_artifacts=["contact_id", "deal_id", "cleanup_status"],
+        )
+
+        result = GauntletNativeDryRunScorer().score(workflow, ProductSurfaceMap(interfaces=["rest"]), ServiceMap())
+
+        self.assertFalse(result.feasible)
+        self.assertIn("operation_chain_incompatible", {defect.code for defect in result.defects})
+
+    def test_harness_blocks_unsafe_side_effect_without_seed_or_policy(self) -> None:
+        workflow = WorkflowDraft(
+            name="Send campaign",
+            description="Sends a campaign without grounding.",
+            audience="agent_builder",
+            workflow_type="agent_under_test",
+            surface_area="Marketing API",
+            product_capabilities=["Send campaigns"],
+            services=[ServiceDependency(name="primary_api", mode="twin", domain="api.product.test")],
+            task_prompt="Using the REST API, send campaign camp_123, verify the send response, and report the delivery event id.",
+            required_secrets=["PRODUCT_API_KEY"],
+            egress_policy=[EgressRule(domain="api.product.test", mode="twin", service="primary_api")],
+            seed_data=[],
+            expected_state_transitions=["A campaign send is triggered."],
+            success_conditions=[
+                SuccessCondition("POST /v1/campaigns/{campaign_id}/send returns status 202.", "api_response"),
+                SuccessCondition("The response contains event id send_evt_001.", "api_response"),
+                SuccessCondition("The delivery state contains campaign_id camp_123.", "twin_state"),
+            ],
+            rubric=["Uses the REST API.", "Verifies the send response.", "Reports evidence."],
+            failure_modes_tested=["unsafe side effect"],
+            difficulty="hard",
+            target_interfaces=["rest"],
+            test_fixtures={"operation": "POST /v1/campaigns/{campaign_id}/send", "campaign_id": "camp_123"},
+            expected_artifacts=["send_evt_001"],
+        )
+
+        result = GauntletNativeDryRunScorer().score(workflow, ProductSurfaceMap(interfaces=["rest"]), ServiceMap(services=workflow.services))
+
+        self.assertFalse(result.feasible)
+        self.assertEqual(result.risk_level, "high")
+        self.assertIn("unsafe_side_effect_without_seed", {defect.code for defect in result.defects})
+
+    def test_harness_requires_specific_machine_checkable_oracles(self) -> None:
+        workflow = WorkflowDraft(
+            name="Vague artifact workflow",
+            description="Has an operation but no checkable oracle.",
+            audience="agent_builder",
+            workflow_type="agent_under_test",
+            surface_area="Files API",
+            product_capabilities=["Upload files"],
+            services=[],
+            task_prompt="Using the REST API, upload a small file through the documented endpoint, retrieve it, and summarize whether the workflow behaved as expected.",
+            required_secrets=[],
+            egress_policy=[],
+            seed_data=[],
+            expected_state_transitions=["A file is uploaded and retrieved."],
+            success_conditions=[
+                SuccessCondition("The upload works as expected.", "api_response"),
+                SuccessCondition("The file is handled correctly.", "artifact"),
+                SuccessCondition("The final answer is appropriate.", "transcript"),
+            ],
+            rubric=["Uploads a file.", "Retrieves a file.", "Summarizes the result."],
+            failure_modes_tested=["weak oracle"],
+            difficulty="core",
+            target_interfaces=["rest"],
+            test_fixtures={"operation": "POST /v1/files", "filename": "gauntlet-note.txt"},
+            expected_artifacts=["file_artifact"],
+        )
+
+        result = GauntletNativeDryRunScorer().score(workflow, ProductSurfaceMap(interfaces=["rest"]), ServiceMap())
+
+        self.assertFalse(result.feasible)
+        self.assertIn("weak_oracle", {defect.code for defect in result.defects})
 
     def test_llm_planner_uses_gemini_when_gemini_key_is_configured(self) -> None:
         calls = {"gemini": 0}

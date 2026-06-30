@@ -65,7 +65,7 @@ def parse_docs(raw_docs: list[dict[str, Any]]) -> list[DocumentInput]:
             continue
         title = str(item.get("title") or item.get("name") or f"doc-{idx + 1}")
         url = item.get("url")
-        docs.append(DocumentInput(title=title, text=text[:200_000], url=str(url) if url else None))
+        docs.append(DocumentInput(title=title, text=text[:1_000_000], url=str(url) if url else None))
     return docs
 
 

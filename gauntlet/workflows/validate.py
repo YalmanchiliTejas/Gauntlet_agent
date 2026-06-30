@@ -8,6 +8,13 @@ from .schema import ProductSurfaceMap, ServiceMap, ValidationIssue, WorkflowDraf
 
 _PLACEHOLDER_RE = re.compile(r"\b(TODO|TBD|FIXME|example_|fake_|placeholder|xxx|your_|<[^>]+>)\b", re.IGNORECASE)
 _VAGUE_RE = re.compile(r"\b(correctly|successfully|properly|as needed|etc\.?|appropriate)\b", re.IGNORECASE)
+_WEAK_ORACLE_RE = re.compile(r"\b(expected persisted context|cleanup evidence|timeline entries)\b", re.IGNORECASE)
+_ASSERTION_ANCHOR_RE = re.compile(
+    r"\b(https?://|[A-Za-z0-9_.-]+\.[A-Za-z]{2,}|session id|profile id|file|screenshot|title|status|"
+    r"response|release|lookup|event id|timestamp|contains|exactly|localStorage|cookie|trace|artifact|"
+    r"gauntlet_|Example Domain|200|404)\b",
+    re.IGNORECASE,
+)
 
 
 def validate_workflow(
@@ -38,6 +45,9 @@ def validate_workflow(
             issues.append(_issue("undeclared_egress", f"Egress domain '{rule.domain}' is not declared by any service.", workflow))
         if rule.mode == "live" and not (live_service_approval or rule.approved):
             issues.append(_issue("live_egress_without_approval", f"Live egress '{rule.domain}' lacks approval.", workflow))
+
+    if workflow.required_secrets and not workflow.egress_policy:
+        issues.append(_issue("missing_secret_egress", "Workflow requires secrets but declares no egress route or service route.", workflow))
 
     for cap in workflow.product_capabilities:
         if known_caps and cap not in known_caps:
@@ -74,9 +84,20 @@ def validate_workflow(
     if vague_conditions:
         issues.append(_issue("vague_success_criteria", "Success criteria contain vague wording.", workflow))
 
+    weak_conditions = [
+        cond.description
+        for cond in workflow.success_conditions
+        if _WEAK_ORACLE_RE.search(cond.description) and not _ASSERTION_ANCHOR_RE.search(cond.description)
+    ]
+    if weak_conditions:
+        issues.append(_issue("weak_success_oracle", "Success criteria are not anchored to a machine-checkable artifact, field, status, or state assertion.", workflow))
+
+    if workflow.cleanup_required and not _has_cleanup_oracle(workflow):
+        issues.append(_issue("missing_cleanup_oracle", "Cleanup-required workflow needs a release plus post-cleanup response, lookup, status, event, or trace assertion.", workflow))
+
     if workflow.services and not workflow.seed_data:
-        mutating = any(_service_implies_mutation(service) for service in workflow.services)
-        if mutating:
+        mutating = _workflow_implies_mutation(workflow)
+        if mutating and not _creates_state_in_run(workflow):
             issues.append(_issue("missing_seed_data", "Service workflow mutates or inspects services without seed data.", workflow))
 
     if not workflow.failure_modes_tested:
@@ -92,6 +113,33 @@ def _issue(code: str, message: str, workflow: WorkflowDraft) -> ValidationIssue:
 def _service_implies_mutation(service) -> bool:
     mutating_words = ("create", "update", "delete", "post", "send", "draft", "refund", "transition", "approve")
     return bool(service.allowed_side_effects) or any(word in " ".join(service.capabilities).lower() for word in mutating_words)
+
+
+def _creates_state_in_run(workflow: WorkflowDraft) -> bool:
+    text = " ".join([workflow.task_prompt, " ".join(workflow.expected_state_transitions)]).lower()
+    return any(phrase in text for phrase in ("create a", "create an", "creating a", "creating an", "creates a", "is created", "created during", "during the run"))
+
+
+def _workflow_implies_mutation(workflow: WorkflowDraft) -> bool:
+    text = " ".join(
+        [
+            workflow.task_prompt,
+            " ".join(workflow.expected_state_transitions),
+            " ".join(condition.description for condition in workflow.success_conditions),
+        ]
+    ).lower()
+    return any(word in text for word in ("create", "update", "delete", "post", "send", "draft", "refund", "upload", "release"))
+
+
+def _has_cleanup_oracle(workflow: WorkflowDraft) -> bool:
+    text = " ".join(
+        [workflow.task_prompt]
+        + workflow.expected_state_transitions
+        + [condition.description for condition in workflow.success_conditions]
+    ).lower()
+    has_cleanup_action = any(word in text for word in ("release", "released", "cleanup", "cleaned up", "close"))
+    has_cleanup_proof = any(word in text for word in ("post-release", "no longer active", "terminated", "release response", "lookup", "status", "trace"))
+    return has_cleanup_action and has_cleanup_proof
 
 
 def _has_suspicious_undeclared_id(text: str, declared_refs: set[str]) -> bool:

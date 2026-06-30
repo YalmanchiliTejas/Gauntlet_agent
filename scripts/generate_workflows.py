@@ -2,8 +2,8 @@
 
 Examples:
   python scripts/generate_workflows.py \
-    --doc llms.txt=/tmp/steel-llms.txt \
-    --doc llms-full.txt=/tmp/steel-llms-full.txt \
+    --doc product-docs.md=/tmp/product-docs.md \
+    --doc api-reference.md=/tmp/api-reference.md \
     --planner llm
 
   python scripts/generate_workflows.py \
@@ -52,10 +52,15 @@ def main() -> int:
     )
     parser.add_argument("--repair-attempts", type=int, default=1)
     parser.add_argument(
+        "--no-rules-fallback",
+        action="store_true",
+        help="When using the LLM planner, do not also include deterministic rule-based candidates.",
+    )
+    parser.add_argument(
         "--secret",
         action="append",
         default=[],
-        help="Declared secret name, not value. Can be passed multiple times, e.g. --secret STEEL_API_KEY",
+        help="Declared secret name, not value. Can be passed multiple times, e.g. --secret PRODUCT_API_KEY",
     )
     parser.add_argument("--json", action="store_true", help="Print the full JSON response.")
     parser.add_argument("--output", default="", help="Optional path to write the full JSON response.")
@@ -81,6 +86,7 @@ def main() -> int:
         "coverage": {"count": args.count, "candidate_count": args.candidate_count},
         "planner": args.planner,
         "repair_attempts": args.repair_attempts,
+        "combine_rule_candidates": not args.no_rules_fallback,
     }
 
     result = generate_workflows_json(payload)

@@ -12,6 +12,17 @@ python scripts/generate_workflows.py
 
 The script loads `.env` by default, reads one or more doc files, runs the workflow generator, and prints either a readable summary or full JSON.
 
+From a normal user perspective, only docs and desired workflow count should be required:
+
+```bash
+python scripts/generate_workflows.py \
+  --doc llms.txt=/tmp/product-llms.txt \
+  --doc llms-full.txt=/tmp/product-llms-full.txt \
+  --count 5
+```
+
+With `planner=auto`, Gauntlet uses the LLM planner when a planner key is configured and also includes deterministic rule candidates as a fallback candidate pool. Validation and dry-run scoring still decide what reaches the final output.
+
 ## Basic Setup
 
 From the repo root:
@@ -20,11 +31,11 @@ From the repo root:
 cd /Users/aryanjain/projects/Gauntlet_agent
 ```
 
-Fetch Steel docs into local files:
+Fetch product docs into local files:
 
 ```bash
-curl -L -s https://docs.steel.dev/llms.txt -o /tmp/steel-llms.txt
-curl -L -s https://docs.steel.dev/llms-full.txt -o /tmp/steel-llms-full.txt
+curl -L -s https://docs.example.com/llms.txt -o /tmp/product-llms.txt
+curl -L -s https://docs.example.com/llms-full.txt -o /tmp/product-llms-full.txt
 ```
 
 Your `.env` can include:
@@ -39,26 +50,41 @@ Do not commit `.env` or paste real API keys into prompts, docs, or test fixtures
 
 ## Recommended Commands
 
+### Minimal User-Style Run
+
+This is the intended product shape: the user provides docs and tells Gauntlet how many workflows they want.
+
+```bash
+python scripts/generate_workflows.py \
+  --doc llms.txt=/tmp/product-llms.txt \
+  --doc llms-full.txt=/tmp/product-llms-full.txt \
+  --count 5
+```
+
+The generator decides whether to use LLM planning based on configured environment variables. If no LLM key is configured, it falls back to rules.
+
 ### Gemini LLM Planner
 
 ```bash
 python scripts/generate_workflows.py \
-  --doc llms.txt=/tmp/steel-llms.txt \
-  --doc llms-full.txt=/tmp/steel-llms-full.txt \
+  --doc llms.txt=/tmp/product-llms.txt \
+  --doc llms-full.txt=/tmp/product-llms-full.txt \
   --planner llm \
-  --secret STEEL_API_KEY \
+  --secret PRODUCT_API_KEY \
   --count 5 \
   --candidate-count 10
 ```
+
+By default, LLM planner runs also include rule-based fallback candidates. This is intentional: it gives better coverage when the LLM has good ideas but misses schema details.
 
 ### Rules Fallback
 
 ```bash
 python scripts/generate_workflows.py \
-  --doc llms.txt=/tmp/steel-llms.txt \
-  --doc llms-full.txt=/tmp/steel-llms-full.txt \
+  --doc llms.txt=/tmp/product-llms.txt \
+  --doc llms-full.txt=/tmp/product-llms-full.txt \
   --planner rules \
-  --secret STEEL_API_KEY \
+  --secret PRODUCT_API_KEY \
   --count 5
 ```
 
@@ -66,14 +92,14 @@ python scripts/generate_workflows.py \
 
 ```bash
 python scripts/generate_workflows.py \
-  --doc llms.txt=/tmp/steel-llms.txt \
-  --doc llms-full.txt=/tmp/steel-llms-full.txt \
+  --doc llms.txt=/tmp/product-llms.txt \
+  --doc llms-full.txt=/tmp/product-llms-full.txt \
   --planner llm \
-  --secret STEEL_API_KEY \
+  --secret PRODUCT_API_KEY \
   --count 5 \
   --candidate-count 10 \
   --json \
-  --output /tmp/steel-workflows.json
+  --output /tmp/product-workflows.json
 ```
 
 ## Flags
@@ -87,8 +113,8 @@ Can be passed multiple times.
 Example:
 
 ```bash
---doc llms.txt=/tmp/steel-llms.txt
---doc llms-full.txt=/tmp/steel-llms-full.txt
+--doc llms.txt=/tmp/product-llms.txt
+--doc llms-full.txt=/tmp/product-llms-full.txt
 ```
 
 `TITLE` is how the doc appears in generated context. `PATH` is the local file path.
@@ -145,6 +171,18 @@ Default:
 
 Use `0` to disable repair.
 
+### `--no-rules-fallback`
+
+Disables rule-based candidate generation when using `--planner llm` or `--planner auto` with an LLM key.
+
+Default behavior is to combine LLM candidates with deterministic rules candidates, then select the best validated workflows across both pools.
+
+Use this flag only when you want to inspect pure LLM behavior:
+
+```bash
+--planner llm --no-rules-fallback
+```
+
 ### `--secret NAME`
 
 Declares a secret name that generated workflows are allowed to require.
@@ -152,17 +190,17 @@ Declares a secret name that generated workflows are allowed to require.
 Example:
 
 ```bash
---secret STEEL_API_KEY
+--secret PRODUCT_API_KEY
 ```
 
-This is not the secret value. It only means workflows may require a secret named `STEEL_API_KEY`.
+This is not the secret value. It only means workflows may require a secret named `PRODUCT_API_KEY`.
 
 If a workflow requires a secret that was not declared, validation rejects it with `unknown_secret`.
 
 Can be passed multiple times:
 
 ```bash
---secret STEEL_API_KEY --secret OPENAI_API_KEY
+--secret PRODUCT_API_KEY --secret OPENAI_API_KEY
 ```
 
 ### `--services-json PATH`
@@ -215,7 +253,7 @@ Writes the full JSON response to a file.
 Example:
 
 ```bash
---output /tmp/steel-workflows.json
+--output /tmp/product-workflows.json
 ```
 
 This can be combined with or without `--json`.
