@@ -97,8 +97,10 @@ class Twin:
         return json.loads(r[0]) if r else None
 
     def _all(self, resource):
+        # ORDER BY rowid = stable insertion order. Without it SQLite returns rows in
+        # (resource, id) index order, and random ids make list order nondeterministic.
         return [json.loads(b) for (b,) in
-                self.db.execute("SELECT body FROM records WHERE resource=?", (resource,))]
+                self.db.execute("SELECT body FROM records WHERE resource=? ORDER BY rowid", (resource,))]
 
     # ---- operations: (payload, status) ----
     def create(self, resource, body):

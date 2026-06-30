@@ -83,6 +83,27 @@ def _end(span: dict):
     return span.get("endTimeUnixNano") or span.get("end_time") or span.get("endTime") or _start(span)
 
 
+def from_egress(events: list[dict]) -> list[dict]:
+    """Fallback trajectory for an UNINSTRUMENTED agent: synthesize tool_call/result steps
+    from the proxy's egress log. The network calls the agent made are its external actions,
+    so redundancy / failure / denied-egress detection still works without any OTel spans.
+    (No reasoning/thoughts — those only exist with real instrumentation.)"""
+    steps: list[dict] = []
+    for i, e in enumerate(events):
+        cid = f"e{i}"
+        ts = e.get("ts", 0)
+        steps.append({"type": "tool_call", "id": cid, "ts": ts,
+                      "tool": e.get("service") or "http",
+                      "args": {"method": e.get("method"), "url": e.get("url")}})
+        status = e.get("status")
+        denied = e.get("mode") == "deny" or status == 403
+        ok = status is not None and status < 400 and not denied
+        res = {"type": "tool_result", "id": cid, "ts": ts, "ok": ok}
+        res["output" if ok else "error"] = (f"HTTP {status}" + (" (egress denied)" if denied else ""))
+        steps.append(res)
+    return steps
+
+
 def from_otlp_docs(docs: list) -> list[dict]:
     """Merge many OTLP export docs (one per agent POST to /v1/traces) into a trajectory."""
     merged = {"resourceSpans": []}
@@ -143,6 +164,13 @@ def _demo() -> None:
     # multiple export docs merge into one trajectory
     merged = from_otlp_docs([doc, {"resourceSpans": []}])
     assert [s["type"] for s in merged] == [s["type"] for s in steps], merged
+    # egress fallback: uninstrumented agent -> trajectory from the proxy log
+    eg = from_egress([
+        {"ts": 1, "service": "hubspot", "method": "GET", "url": "https://api.hubapi.com/x", "status": 200},
+        {"ts": 2, "service": "twilio", "method": "POST", "url": "https://api.twilio.com/y", "status": 403, "mode": "deny"},
+    ])
+    assert [s["type"] for s in eg] == ["tool_call", "tool_result", "tool_call", "tool_result"], eg
+    assert eg[1]["ok"] is True and eg[3]["ok"] is False and "denied" in eg[3]["error"], eg
     print("ok")
 
 

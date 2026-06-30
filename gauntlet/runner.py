@@ -15,6 +15,7 @@ import httpx
 
 from judge import ingest
 from judge import judge as run_judge
+from judge.verify import load_egress
 from sandbox.orchestrator import Sandbox
 
 from . import build_resolver, github, microvm
@@ -85,21 +86,31 @@ async def _poll_result(endpoint: str, token: str, timeout: float = 600) -> dict:
     return {"done": False, "exit_code": -1, "stderr": "timed out waiting for result"}
 
 
-async def _fetch_trajectory(endpoint: str, vm_token: str, workdir: Path) -> Path | None:
-    """Pull the agent trajectory from the harness into workdir/trajectory.jsonl (or None)."""
+async def _fetch_trajectory(endpoint: str, vm_token: str, workdir: Path,
+                            egress_log: Path | None = None) -> Path | None:
+    """Trajectory for the judge, best source first:
+       1. native JSONL the agent wrote, 2. OTel spans it exported,
+       3. fallback: synthesize from the proxy egress log (uninstrumented agent)."""
+    path = workdir / "trajectory.jsonl"
     try:
         async with httpx.AsyncClient(timeout=30) as c:
             r = await c.get(f"{endpoint.rstrip('/')}/trajectory", headers={"X-aws-proxy-auth": vm_token})
             traj = r.json()
-        path = workdir / "trajectory.jsonl"
         if traj.get("native"):
             path.write_text(traj["native"])
         else:
             steps = ingest.from_otlp_docs(traj.get("otlp") or [])
             path.write_text("".join(json.dumps(s) + "\n" for s in steps))
-        return path if path.stat().st_size else None
     except Exception:
-        return None
+        path.write_text("")
+    if path.stat().st_size:
+        return path
+    # No spans and no native file -> fall back to the network record.
+    events = load_egress(egress_log) if egress_log else []
+    if events:
+        path.write_text("".join(json.dumps(s) + "\n" for s in ingest.from_egress(events)))
+        return path
+    return None
 
 
 async def run_and_judge(root: Path, plan, name: str, workdir: Path) -> dict:
@@ -118,7 +129,8 @@ async def run_and_judge(root: Path, plan, name: str, workdir: Path) -> dict:
         image_id = microvm.build_image(key, name)
         microvm_id, endpoint, vm_token = microvm.run(image_id)
         result = await _poll_result(endpoint, vm_token)
-        tpath = await _fetch_trajectory(endpoint, vm_token, workdir)
+        tpath = await _fetch_trajectory(endpoint, vm_token, workdir,
+                                        sandbox.egress_log if sandbox else None)
         verdict = (run_judge(str(tpath), egress_log=str(sandbox.egress_log) if sandbox else None,
                              services=set(plan.twins))
                    if tpath else {"verdict": "n/a", "issues": [], "note": "no trajectory captured"})
