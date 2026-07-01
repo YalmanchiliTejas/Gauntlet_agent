@@ -12,9 +12,14 @@ APP_DIR=/opt/gauntlet
 REPO_URL="${REPO_URL:?set REPO_URL=https://github.com/you/Gauntlet_agent.git}"
 DOMAIN="${DOMAIN:?set DOMAIN=your.domain.com}"
 
-echo "==> packages (docker image already has docker; add python venv, psql, caddy)"
+echo "==> packages (python venv, psql, caddy prerequisites)"
 apt-get update -y
 apt-get install -y python3-venv postgresql-client debian-keyring debian-archive-keyring apt-transport-https curl
+
+echo "==> docker (skipped if the droplet already has it)"
+if ! command -v docker >/dev/null; then
+  curl -fsSL https://get.docker.com | sh
+fi
 if ! command -v caddy >/dev/null; then
   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
     | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
