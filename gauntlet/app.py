@@ -10,6 +10,7 @@ import time
 from fastapi import FastAPI, Header, HTTPException, Request
 
 from . import config
+from .store import store
 from .workflows.api_models import WorkflowGeneratePayload, model_to_dict
 from .workflows.generate import generate_workflows_json
 
@@ -101,9 +102,43 @@ async def workflows_generate(payload: WorkflowGeneratePayload):
     if not (payload_dict["docs"] or payload_dict["services"] or payload_dict["mcp_tools"]):
         raise HTTPException(400, "provide docs, services, or MCP tools before generating workflows")
     try:
-        return generate_workflows_json(payload_dict)
+        result = generate_workflows_json(payload_dict)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(400, str(exc))
+    try:  # best-effort persistence
+        store().save_workflows(user_id=None, drafts=result.get("workflows") or [])
+    except Exception:
+        pass
+    return result
+
+
+# ---------- read API (backend: runs/traces, workflows, users) ----------
+
+
+@app.get("/runs")
+async def list_runs(user_id: str | None = None, repo: str | None = None, limit: int = 50):
+    return {"runs": store().list_runs(user_id=user_id, repo=repo, limit=limit)}
+
+
+@app.get("/runs/{run_id}")
+async def get_run(run_id: str):
+    run = store().get_run(run_id)
+    if not run:
+        raise HTTPException(404, "run not found")
+    return run
+
+
+@app.get("/workflows")
+async def list_workflows(user_id: str | None = None, limit: int = 50):
+    return {"workflows": store().list_workflows(user_id=user_id, limit=limit)}
+
+
+@app.get("/workflows/{workflow_id}")
+async def get_workflow(workflow_id: str):
+    wf = store().get_workflow(workflow_id)
+    if not wf:
+        raise HTTPException(404, "workflow not found")
+    return wf
 
 
 @app.post("/slack/command")

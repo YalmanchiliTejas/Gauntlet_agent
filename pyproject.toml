@@ -11,6 +11,8 @@ dependencies = [
     "pyjwt[crypto]",
     "jsonschema",
     "mitmproxy",
+    "psycopg[binary]",
+    "psycopg-pool",
 ]
 
 # Run locally:  uvicorn gauntlet.app:app --reload --port 8000

@@ -18,7 +18,23 @@ from judge import judge as run_judge
 from judge.verify import load_egress
 from sandbox.orchestrator import Sandbox
 
-from . import build_resolver, github, microvm
+from . import build_resolver, config, github
+from .store import read_trajectory, store
+
+
+def _sandbox_backend():
+    """Pick the sandbox that builds/runs the customer image. Docker when no
+    MicroVM bucket is configured (or forced); MicroVMs otherwise."""
+    use_docker = config.SANDBOX_BACKEND == "docker" or (
+        config.SANDBOX_BACKEND != "microvm" and not config.MICROVM_S3_BUCKET)
+    if use_docker:
+        from . import docker_vm
+        return docker_vm
+    from . import microvm
+    return microvm
+
+
+microvm = _sandbox_backend()
 
 CHECK_NAME = "gauntlet"
 _TRAJECTORY_VM_PATH = "/gauntlet_trajectory.jsonl"  # where a native-JSONL agent may write
@@ -146,6 +162,7 @@ async def _run(job: Job) -> None:
     gh_token = await github.installation_token(job.installation_id, job.repo)
     check_id = await github.create_check_run(gh_token, job.repo, job.sha, CHECK_NAME)
     workdir = Path(tempfile.mkdtemp(prefix="gauntlet-"))
+    run_id = _persist_run_start(job)
     try:
         root = await github.download_source(gh_token, job.repo, job.sha, workdir)
         plan = build_resolver.resolve(root)
@@ -156,15 +173,42 @@ async def _run(job: Job) -> None:
                    f"```\n{(result.get('stdout') or '')[-3000:]}\n"
                    f"{(result.get('stderr') or '')[-1000:]}\n```"
                    f"{_format_judge(out['verdict'])}")
+        _persist_run_finish(run_id, "passed" if ok else "failed",
+                            exit_code=result.get("exit_code"), verdict=out["verdict"],
+                            trajectory=out.get("trajectory"))
         await github.complete_check_run(gh_token, job.repo, check_id,
                                         "success" if ok else "failure",
                                         "Passed" if ok else "Failed", summary)
     except asyncio.CancelledError:
+        _persist_run_finish(run_id, "canceled", error="Superseded by a newer push.")
         await github.complete_check_run(gh_token, job.repo, check_id, "cancelled",
                                         "Superseded", "A newer push cancelled this run.")
         raise
     except Exception as e:  # report, don't swallow
+        _persist_run_finish(run_id, "error", error=str(e))
         await github.complete_check_run(gh_token, job.repo, check_id, "failure",
                                         "Run failed", f"```\n{e}\n```")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)  # don't persist source
+
+
+# Persistence is best-effort: a database hiccup must never fail a run.
+def _persist_run_start(job: Job) -> str | None:
+    try:
+        s = store()
+        user = s.upsert_user(github_installation_id=job.installation_id)
+        return s.create_run(user_id=user["id"] if user else None,
+                            repo=job.repo, sha=job.sha, ref=job.ref)
+    except Exception:
+        return None
+
+
+def _persist_run_finish(run_id, status, *, exit_code=None, verdict=None,
+                        trajectory=None, error=None) -> None:
+    try:
+        store().finish_run(run_id=run_id, status=status, exit_code=exit_code,
+                           verdict=verdict,
+                           trajectory=read_trajectory(trajectory) if trajectory else None,
+                           error=error)
+    except Exception:
+        pass

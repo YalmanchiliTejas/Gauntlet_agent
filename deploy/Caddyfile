@@ -1,0 +1,5 @@
+# Auto-HTTPS (Let's Encrypt) in front of uvicorn, so the GitHub webhook has a
+# public TLS URL. Replace the domain. Caddy handles cert issuance + renewal.
+gauntlet.example.com {
+    reverse_proxy 127.0.0.1:8000
+}
