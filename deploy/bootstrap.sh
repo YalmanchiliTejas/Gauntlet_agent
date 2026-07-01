@@ -14,7 +14,8 @@ DOMAIN="${DOMAIN:?set DOMAIN=your.domain.com}"
 
 echo "==> packages (python venv, psql, caddy prerequisites)"
 apt-get update -y
-apt-get install -y python3-venv postgresql-client debian-keyring debian-archive-keyring apt-transport-https curl
+apt-get install -y python3-venv python3-dev build-essential postgresql-client \
+  debian-keyring debian-archive-keyring apt-transport-https curl
 
 echo "==> docker (skipped if the droplet already has it)"
 if ! command -v docker >/dev/null; then

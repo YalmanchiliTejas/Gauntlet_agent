@@ -7,3 +7,5 @@ __pycache__/
 fixtures/
 proxy/routing.json
 sandbox-*/
+
+*.egg-info/
