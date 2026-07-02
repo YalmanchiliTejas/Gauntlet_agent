@@ -95,7 +95,11 @@ def _demo() -> None:
     findings = [Finding("reliability", "x must reach 3")]
 
     class Bump:  # a stub coder: +1 each call (mimics an agent making progress)
+        def __init__(self):
+            self.seen: list[str] = []  # records the `failures` arg each call
+
         def propose(self, root, fnds, context, failures=""):
+            self.seen.append(failures)
             cur = int((root / "a.py").read_text().split("=")[1])
             (root / "a.py").write_text(f"x = {cur + 1}\n")
             return "bumped"
@@ -106,10 +110,15 @@ def _demo() -> None:
 
     async def run():
         (d / "a.py").write_text("x = 1\n")
-        r = await fix_loop(d, findings, Bump(), verify, max_iters=4)
+        bump = Bump()
+        r = await fix_loop(d, findings, bump, verify, max_iters=4)
         assert r.converged and r.iterations == 2, r        # 1->2->3 across two iters
         assert "+x = 3" in r.diff and "-x = 1" in r.diff, r.diff
         assert r.remaining == []
+        # fix #2: the coder is amnesiac, so the loop feeds back its own prior edits.
+        assert bump.seen[0] == "", bump.seen                       # nothing attempted yet
+        assert "already attempted" in bump.seen[1], bump.seen      # iter 2 sees iter-1 diff
+        assert "+x = 2" in bump.seen[1], bump.seen
         (d / "a.py").write_text("x = 1\n")
         r2 = await fix_loop(d, findings, Bump(), verify, max_iters=1)
         assert not r2.converged and r2.remaining == findings, r2  # honest, not false success
