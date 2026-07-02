@@ -17,10 +17,10 @@ dependencies = [
     "mitmproxy",
     "psycopg[binary]",
     "psycopg-pool",
-    # Host-agnostic libs (codeindex/codescan/judge/findings) live in ./core so the Fly app
-    # and this droplet share one source of truth. Installed editable from bootstrap.sh.
-    "gauntlet-core",
 ]
+# NOTE: gauntlet-core (./core) is NOT listed above on purpose — it's a local editable package,
+# not a PyPI dist, so listing it makes pip try the index and fail. It's installed separately
+# and FIRST (bootstrap.sh: `pip install -e ./core`), which satisfies the imports.
 
 # Explicit package list — the repo is a flat layout with data dirs (migrations,
 # twins/registry, deploy), so auto-discovery can't guess. Editable install links
