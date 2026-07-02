@@ -32,6 +32,8 @@ fi
 echo "==> app user + code at $APP_DIR"
 id gauntlet >/dev/null 2>&1 || adduser --system --group gauntlet
 usermod -aG docker gauntlet
+# We run git as root but the tree is chowned to gauntlet -> git's ownership guard.
+git config --global --add safe.directory "$APP_DIR"
 if [ -d "$APP_DIR/.git" ]; then
   git -C "$APP_DIR" pull --ff-only
 else
