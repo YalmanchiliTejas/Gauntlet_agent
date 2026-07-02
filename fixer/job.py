@@ -21,7 +21,7 @@ from gauntlet import build_resolver, github
 from gauntlet.runner import Job, run_and_judge
 from judge.trace import load as load_trajectory
 
-from .base import Finding, from_judge, summary
+from .base import Finding, detail_summary, fingerprint, from_judge, summary
 from .codex import CodexCoder
 from .loop import fix_loop, snapshot
 from .output import pr_body, report
@@ -63,7 +63,7 @@ def _failures_text(result: dict, verdict: dict, remaining: list[Finding]) -> str
     return (f"tests exit={result.get('exit_code')}\n"
             f"sim verdict={verdict.get('verdict')}\n"
             f"{(result.get('stderr') or '')[-2000:]}\n"
-            f"remaining:\n{summary(remaining)}")
+            f"remaining:\n{detail_summary(remaining)}")
 
 
 async def _run(job: Job) -> None:
@@ -89,10 +89,25 @@ async def _run(job: Job) -> None:
         coder = CodexCoder()  # default; runs codex in the workdir
         ctx_fn = lambda r, f: render(context_for(r, _seed_names(build(r), f)))
 
+        # Convergence gates on the ORIGINAL findings by identity; issues a fresh judge run
+        # newly flags are reported on the PR, not chased (the judge is stochastic).
+        orig_fps = {fingerprint(f) for f in findings}
+        new_seen: dict[tuple, Finding] = {}
+
         async def verify(r: Path):
+            # Cheap gate first: static scan is seconds, a gauntlet run is a VM build+boot.
+            # ponytail: scan-only cheap gate; add a local test run if scans pass too easily.
+            cheap = [f for f in codescan_static.scan(r)
+                     if f.severity in _SEVERE and fingerprint(f) in orig_fps]
+            if cheap:
+                return False, f"static scan still failing:\n{detail_summary(cheap)}", cheap
             out = await run_and_judge(r, plan, f"{job.repo.replace('/', '-')}-fix{next(names)}-{job.sha[:7]}", workdir)
-            rem = [f for f in _findings_from(out["verdict"], out["trajectory"], r) if f.severity in _SEVERE]
-            ok = out["result"].get("exit_code") == 0 and out["verdict"].get("verdict") in ("pass", "n/a") and not rem
+            cur = [f for f in _findings_from(out["verdict"], out["trajectory"], r) if f.severity in _SEVERE]
+            rem = [f for f in cur if fingerprint(f) in orig_fps]
+            new_seen.update((fingerprint(f), f) for f in cur if fingerprint(f) not in orig_fps)
+            # "warn" from judge noise doesn't block; a "fail" verdict (regression) still does.
+            ok = (out["result"].get("exit_code") == 0
+                  and out["verdict"].get("verdict") != "fail" and not rem)
             return ok, ("" if ok else _failures_text(out["result"], out["verdict"], rem)), rem
 
         before = snapshot(root)
@@ -106,10 +121,13 @@ async def _run(job: Job) -> None:
                 if before.get(rel) != after.get(rel):
                     await github.put_file(gh, job.repo, branch, rel,
                                           after[rel].encode(), "gauntlet: automated fix")
-            fixed = [f for f in findings]
+            fixed = [f for f in findings if f.severity in _SEVERE]  # what verification gated on
+            body = pr_body(result, fixed, before_verdict, "pass")
+            if new_seen:
+                body += ("\n\n## Observed during fixing (new, not blocking — review)\n"
+                         + summary(list(new_seen.values())))
             url = await github.open_pr(gh, job.repo, branch, job.ref,
-                                       "Gauntlet automated fix",
-                                       pr_body(result, fixed, before_verdict, "pass"))
+                                       "Gauntlet automated fix", body)
             await github.complete_check_run(gh, job.repo, check_id, "success",
                                             "Fix PR opened", f"Verified fix opened: {url}")
         else:

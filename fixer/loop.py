@@ -73,7 +73,14 @@ async def fix_loop(root: Path, findings: list[Finding], coder: Coder, verify: Ve
     i = 0
     for i in range(max_iters):
         ctx = context_fn(root, remaining) if context_fn else ""
-        await _maybe_await(coder.propose(root, remaining, ctx, failures))
+        # Give the (stateless) coder memory of its own prior edits so it doesn't re-propose
+        # a change that already failed to converge.
+        attempted = unified_diff(before, root)
+        fb = failures
+        if attempted:
+            fb += ("\n\n## Changes already attempted (did NOT resolve the above — try a different fix)\n"
+                   f"```diff\n{attempted[:4000]}\n```")
+        await _maybe_await(coder.propose(root, remaining, ctx, fb))
         converged, failures, remaining = await _maybe_await(verify(root))
         history.append(converged)
         if converged:

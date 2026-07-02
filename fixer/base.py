@@ -7,6 +7,7 @@ Claude-based patch agent swap in.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
@@ -26,6 +27,14 @@ class Finding:
     line: int | None = None
     evidence: str = ""
     source: str = ""          # judge | semgrep | bandit | investigate | ...
+
+
+def fingerprint(f: Finding) -> tuple[str, str | None, str]:
+    """Identity of a finding across verification runs, so the loop gates convergence on
+    the ORIGINAL findings instead of whatever a fresh (stochastic) judge run flags.
+    Digits are collapsed so 'called 3x' and 'called 2x' are the same finding."""
+    title = re.sub(r"\d+", "#", " ".join(f.title.lower().split()))[:80]
+    return (f.axis, f.file, title)
 
 
 def _axis_from_text(text: str) -> str:
@@ -55,7 +64,7 @@ def from_judge(judge_result: dict, step_dicts: list[dict], index) -> list[Findin
 
 
 def summary(findings: list[Finding]) -> str:
-    """Group findings by axis for a PR body / report."""
+    """Group findings by axis for a PR body / report (human-facing, terse)."""
     lines = []
     for axis in AXES:
         items = [f for f in findings if f.axis == axis]
@@ -65,6 +74,20 @@ def summary(findings: list[Finding]) -> str:
         for f in items:
             loc = f" — `{f.file}:{f.line}`" if f.file else ""
             lines.append(f"- [{f.severity}] {f.title}{loc}")
+    return "\n".join(lines) or "No findings."
+
+
+def detail_summary(findings: list[Finding]) -> str:
+    """Coder-facing summary: keeps the judge's recommendation (`detail`) and `evidence`,
+    which `summary` drops. This is the highest-signal feedback the coder gets."""
+    lines = []
+    for f in findings:
+        loc = f" — `{f.file}:{f.line}`" if f.file else ""
+        lines.append(f"- [{f.severity}] {f.title}{loc}")
+        if f.detail:
+            lines.append(f"    fix: {f.detail}")
+        if f.evidence:
+            lines.append(f"    evidence: {f.evidence[:300]}")
     return "\n".join(lines) or "No findings."
 
 
@@ -88,6 +111,13 @@ def _demo() -> None:
     fs = from_judge(jr, steps, idx)
     assert fs[0].axis == "redundancy", fs
     assert fs[0].file == "tools.py", fs            # anchored to code via probe
+    ds = detail_summary(fs)
+    assert "fix: cache the result" in ds, ds       # recommendation survives to the coder
+    assert "fix:" not in summary(fs)               # human summary still drops it
+    same = Finding("redundancy", "hubspot.search called 2x with identical args (redundant)",
+                   file="tools.py")
+    assert fingerprint(fs[0]) == fingerprint(same)                   # counts differ, same finding
+    assert fingerprint(fs[0]) != fingerprint(Finding("security", fs[0].title, file="tools.py"))
     s = summary(fs + [Finding("security", "hardcoded API key", "high", file="x.py", line=2)])
     assert "### security" in s and "### redundancy" in s, s
     print("ok")

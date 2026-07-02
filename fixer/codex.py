@@ -11,15 +11,16 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from .base import Finding, summary
+from .base import Finding, detail_summary
 
 
 def fix_prompt(findings: list[Finding], context: str, failures: str = "") -> str:
     """The grounded fix prompt (CodeRabbit-style): findings + cross-file context + constraints
-    + the previous iteration's concrete failures."""
+    + the previous iteration's concrete failures. Uses `detail_summary` so the judge's
+    recommendation and evidence reach the coder, not just the title/location."""
     p = ["Fix the issues below in this repository. Make the SMALLEST change that resolves each.",
          "Do not break the callers/importers shown in the context. Keep existing behavior otherwise.",
-         "", "## Issues", summary(findings), "", "## Cross-file context", context]
+         "", "## Issues", detail_summary(findings), "", "## Cross-file context", context]
     if failures:
         p += ["", "## Previous attempt still failing — address this output", failures[:6000]]
     return "\n".join(p)
