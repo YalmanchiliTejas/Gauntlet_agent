@@ -42,6 +42,8 @@ fi
 
 echo "==> python venv"
 python3 -m venv "$APP_DIR/.venv"
+# Shared libs first (gauntlet-agent depends on gauntlet-core), then the app itself.
+"$APP_DIR/.venv/bin/pip" install -q -e "$APP_DIR/core"
 "$APP_DIR/.venv/bin/pip" install -q -e "$APP_DIR"
 
 echo "==> .env"

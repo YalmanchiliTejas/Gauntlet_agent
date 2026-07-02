@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gauntlet-core"
+version = "0.1.0"
+description = "Host-agnostic Gauntlet libraries shared by the Fly app and the DO droplet: code index/scan, the agent judge, and the shared Finding type."
+requires-python = ">=3.10"
+
+# codeindex / codescan / judge are packages; findings is a single shared module (the Finding
+# type + judge->Finding conversion + summaries + the Coder protocol).
+[tool.setuptools]
+py-modules = ["findings"]
+
+[tool.setuptools.packages.find]
+include = ["codeindex*", "codescan*", "judge*"]

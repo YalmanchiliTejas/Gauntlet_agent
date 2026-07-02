@@ -5,7 +5,7 @@ github helpers + `FixResult.diff`. Kept separate so it's unit-testable.
 """
 from __future__ import annotations
 
-from .base import Finding, summary
+from findings import Finding, summary
 from .loop import FixResult
 
 

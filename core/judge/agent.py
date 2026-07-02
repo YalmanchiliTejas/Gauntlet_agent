@@ -17,7 +17,7 @@ import os
 import time
 from typing import Callable
 
-from gauntlet.workflows.llm_planner import _extract_json_object, _send_prompt
+from ._llm import _extract_json_object, _send_prompt
 
 from .analyze import analyze
 from .querytrace import TOOL_DOCS, dispatch, recurse, stats

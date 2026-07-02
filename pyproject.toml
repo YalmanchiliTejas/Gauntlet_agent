@@ -17,12 +17,15 @@ dependencies = [
     "mitmproxy",
     "psycopg[binary]",
     "psycopg-pool",
+    # Host-agnostic libs (codeindex/codescan/judge/findings) live in ./core so the Fly app
+    # and this droplet share one source of truth. Installed editable from bootstrap.sh.
+    "gauntlet-core",
 ]
 
 # Explicit package list — the repo is a flat layout with data dirs (migrations,
 # twins/registry, deploy), so auto-discovery can't guess. Editable install links
 # to the source, so twins' JSON registry etc. resolve via __file__ at runtime.
 [tool.setuptools.packages.find]
-include = ["gauntlet*", "judge*", "sandbox*", "twins*", "proxy*", "fixer*", "codescan*", "codeindex*"]
+include = ["gauntlet*", "sandbox*", "twins*", "proxy*", "fixer*"]  # judge/codescan/codeindex/findings now in gauntlet-core (./core)
 
 # Run locally:  uvicorn gauntlet.app:app --reload --port 8000

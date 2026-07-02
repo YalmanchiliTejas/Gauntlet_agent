@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from fixer.base import Finding, _axis_from_text
+from findings import Finding, _axis_from_text
 
 _SEMGREP_SEV = {"ERROR": "high", "WARNING": "med", "INFO": "low"}
 _BANDIT_SEV = {"HIGH": "high", "MEDIUM": "med", "LOW": "low"}

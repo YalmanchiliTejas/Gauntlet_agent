@@ -141,14 +141,14 @@ async def _fetch_trajectory(endpoint: str, vm_token: str, workdir: Path,
     return None
 
 
-async def run_and_judge(root: Path, plan, name: str, workdir: Path,
+async def run_and_trace(root: Path, plan, name: str, workdir: Path,
                         extra_env: dict | None = None, egress_default: str = "deny") -> dict:
-    """Build+run the agent in a MicroVM, capture result + trajectory, judge it, teardown.
-    Returns {"result", "verdict" (dict), "trajectory": Path|None}. Shared by the check runner
-    and the fixer's verification loop. Holds no GitHub token — vm_token stays local.
+    """Build+run the CUSTOMER agent in the sandbox, capture result + trajectory, teardown.
+    Returns {"result", "trajectory": Path|None, "egress_log": Path|None, "services": list}.
+    This is all the droplet does — NO judge. The judge + fixer loop run on Fly, which calls
+    this over the `/sandbox/exec` endpoint and judges the returned trajectory locally.
     `extra_env` bakes extra vars into the image (e.g. GAUNTLET_TASK_PROMPT for a workflow run).
-    `egress_default` = deny (default) | live (undeclared domains passthrough to the real host).
-    With `live`, the proxy runs even when no twins are declared, so egress is still logged."""
+    `egress_default` = deny (default) | live (undeclared domains passthrough to the real host)."""
     sandbox = None
     microvm_id = None
     try:
@@ -165,15 +165,34 @@ async def run_and_judge(root: Path, plan, name: str, workdir: Path,
         result = await _poll_result(endpoint, vm_token)
         tpath = await _fetch_trajectory(endpoint, vm_token, workdir,
                                         sandbox.egress_log if sandbox else None)
-        verdict = (run_judge(str(tpath), egress_log=str(sandbox.egress_log) if sandbox else None,
-                             services=set(plan.twins))
-                   if tpath else {"verdict": "n/a", "issues": [], "note": "no trajectory captured"})
-        return {"result": result, "verdict": verdict, "trajectory": tpath}
+        # Copy the egress log into the workdir so it outlives sandbox teardown — the Fly-side
+        # judge needs it alongside the trajectory.
+        epath = None
+        if sandbox and Path(sandbox.egress_log).exists():
+            epath = workdir / "egress.jsonl"
+            epath.write_bytes(Path(sandbox.egress_log).read_bytes())
+        return {"result": result, "trajectory": tpath, "egress_log": epath,
+                "services": sorted(plan.twins) if plan.twins else []}
     finally:
         if microvm_id:
             microvm.terminate(microvm_id)
         if sandbox:
             sandbox.teardown()
+
+
+async def run_and_judge(root: Path, plan, name: str, workdir: Path,
+                        extra_env: dict | None = None, egress_default: str = "deny") -> dict:
+    """run_and_trace + judge in one call. Retained for the droplet's STANDALONE mode; the
+    Fly integration instead calls run_and_trace (via /sandbox/exec) and judges on Fly.
+    Returns {"result", "verdict" (dict), "trajectory": Path|None}."""
+    out = await run_and_trace(root, plan, name, workdir,
+                              extra_env=extra_env, egress_default=egress_default)
+    tpath = out["trajectory"]
+    verdict = (run_judge(str(tpath),
+                         egress_log=str(out["egress_log"]) if out["egress_log"] else None,
+                         services=set(out["services"]))
+               if tpath else {"verdict": "n/a", "issues": [], "note": "no trajectory captured"})
+    return {"result": out["result"], "verdict": verdict, "trajectory": tpath}
 
 
 async def _run(job: Job) -> None:

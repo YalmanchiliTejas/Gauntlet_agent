@@ -209,6 +209,56 @@ async def sandbox_run(payload: dict, x_sandbox_secret: str | None = Header(None)
     return {"queued": True, "workflow_id": payload.get("workflow_id")}
 
 
+@app.post("/sandbox/exec")
+async def sandbox_exec(payload: dict, x_sandbox_secret: str | None = Header(None)):
+    """Run+trace ONLY (no judge). Fly's fixer loop / judge live on Fly and call this with
+    an uploaded source bundle (the possibly-uncommitted working copy), then judge the
+    returned trajectory locally.
+
+    Body: {bundle_b64, name?, twins?, modes?, env?, egress_default?}.
+    Returns: {result, trajectory: str|null, egress_log: str|null, services: [str]}.
+    ponytail: bundle is base64 JSON — fine for small repos; switch to multipart/object-store
+    if bundles get large."""
+    import base64
+    import io
+    import tempfile
+    import zipfile
+    from pathlib import Path
+
+    if config.SANDBOX_INBOUND_SECRET and not hmac.compare_digest(
+            x_sandbox_secret or "", config.SANDBOX_INBOUND_SECRET):
+        raise HTTPException(401, "bad sandbox secret")
+    try:
+        raw = base64.b64decode(payload["bundle_b64"])
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "need bundle_b64 (base64 zip of the source)")
+
+    from . import build_resolver, runner
+
+    workdir = Path(tempfile.mkdtemp(prefix="gauntlet-exec-"))
+    root = workdir / "src"
+    root.mkdir()
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw)) as z:
+            z.extractall(root)  # ponytail: trusted caller (Fly), auth'd by the shared secret
+        plan = build_resolver.resolve(root)
+        if payload.get("twins") is not None:  # let the caller override declared twins
+            plan.twins = _resolve_twins(payload.get("twins")) or {}
+            plan.modes = payload.get("modes") or {}
+        extra_env = payload.get("env") or None
+        out = await runner.run_and_trace(
+            root, plan, payload.get("name", "fly-exec"), workdir,
+            extra_env=extra_env, egress_default=payload.get("egress_default", "live"))
+        tpath, epath = out["trajectory"], out["egress_log"]
+        return {"result": out["result"],
+                "trajectory": tpath.read_text() if tpath else None,
+                "egress_log": epath.read_text() if epath else None,
+                "services": out["services"]}
+    finally:
+        import shutil
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 @app.post("/slack/command")
 async def slack_command(
     request: Request,

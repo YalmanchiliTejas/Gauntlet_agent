@@ -17,7 +17,7 @@ async def _maybe_await(v):
     """Let coder/verify be sync (tests) or async (real microVM run)."""
     return await v if inspect.isawaitable(v) else v
 
-from .base import Coder, Finding
+from findings import Coder, Finding
 
 _TEXT_MAX = 1_000_000
 

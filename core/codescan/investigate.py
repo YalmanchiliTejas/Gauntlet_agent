@@ -10,11 +10,11 @@ from __future__ import annotations
 import json
 from typing import Callable
 
-from gauntlet.workflows.llm_planner import _extract_json_object, _send_prompt
+from judge._llm import _extract_json_object, _send_prompt
 from judge.agent import _OBS_CAP, _has_creds, _send_retry
 from judge.redact import redact_str
 
-from fixer.base import Finding
+from findings import Finding
 
 _SYSTEM = """You are a security + reliability auditor of an AI agent's codebase. Investigate by
 issuing shell commands (grep, ast-grep, semgrep -e '<pattern>', cat, sed -n) — the repo is the

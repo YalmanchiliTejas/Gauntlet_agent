@@ -21,7 +21,7 @@ from gauntlet import build_resolver, github
 from gauntlet.runner import Job, run_and_judge
 from judge.trace import load as load_trajectory
 
-from .base import Finding, detail_summary, fingerprint, from_judge, summary
+from findings import Finding, detail_summary, fingerprint, from_judge, summary
 from .codex import CodexCoder
 from .loop import fix_loop, snapshot
 from .output import pr_body, report

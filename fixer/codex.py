@@ -11,7 +11,7 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from .base import Finding, detail_summary
+from findings import Finding, detail_summary
 
 
 def fix_prompt(findings: list[Finding], context: str, failures: str = "") -> str:
