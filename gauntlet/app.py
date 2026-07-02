@@ -7,7 +7,7 @@ import hashlib
 import hmac
 import time
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 
 from . import config
 from .store import store
@@ -36,6 +36,15 @@ def _verify_slack(body: bytes, ts: str | None, sig: str | None) -> None:
         config.SLACK_SIGNING_SECRET.encode(), base, hashlib.sha256).hexdigest()
     if not sig or not hmac.compare_digest(expected, sig):
         raise HTTPException(401, "bad signature")
+
+
+def require_api_key(x_api_key: str | None = Header(None)) -> None:
+    """Gate the read/trigger/generate endpoints. Blank key = open (dev)."""
+    if config.GAUNTLET_API_KEY and not hmac.compare_digest(x_api_key or "", config.GAUNTLET_API_KEY):
+        raise HTTPException(401, "bad api key")
+
+
+_KEYED = [Depends(require_api_key)]  # attach to protected routes
 
 
 @app.get("/health")
@@ -80,7 +89,7 @@ async def github_webhook(
     return {"queued": True}
 
 
-@app.post("/trigger")
+@app.post("/trigger", dependencies=_KEYED)
 async def ui_trigger(payload: dict):
     """UI trigger. Body: {repo, sha, ref?, installation_id}."""
     from . import runner
@@ -95,7 +104,7 @@ async def ui_trigger(payload: dict):
     return {"queued": True}
 
 
-@app.post("/workflows/generate")
+@app.post("/workflows/generate", dependencies=_KEYED)
 async def workflows_generate(payload: WorkflowGeneratePayload):
     """Generate validated workflow drafts from docs, repo context, and service twins."""
     payload_dict = model_to_dict(payload)
@@ -115,12 +124,12 @@ async def workflows_generate(payload: WorkflowGeneratePayload):
 # ---------- read API (backend: runs/traces, workflows, users) ----------
 
 
-@app.get("/runs")
+@app.get("/runs", dependencies=_KEYED)
 async def list_runs(user_id: str | None = None, repo: str | None = None, limit: int = 50):
     return {"runs": store().list_runs(user_id=user_id, repo=repo, limit=limit)}
 
 
-@app.get("/runs/{run_id}")
+@app.get("/runs/{run_id}", dependencies=_KEYED)
 async def get_run(run_id: str):
     run = store().get_run(run_id)
     if not run:
@@ -128,17 +137,76 @@ async def get_run(run_id: str):
     return run
 
 
-@app.get("/workflows")
+@app.get("/workflows", dependencies=_KEYED)
 async def list_workflows(user_id: str | None = None, limit: int = 50):
     return {"workflows": store().list_workflows(user_id=user_id, limit=limit)}
 
 
-@app.get("/workflows/{workflow_id}")
+@app.get("/workflows/{workflow_id}", dependencies=_KEYED)
 async def get_workflow(workflow_id: str):
     wf = store().get_workflow(workflow_id)
     if not wf:
         raise HTTPException(404, "workflow not found")
     return wf
+
+
+import pathlib
+
+from sandbox.orchestrator import DOMAINS  # services we ship a twin for
+
+_REGISTRY = pathlib.Path(__file__).resolve().parent.parent / "twins" / "registry"
+
+
+def _resolve_twins(twins: dict | None) -> dict | None:
+    """Keep only services with a shipped twin, filling a missing version from the
+    registry (latest). None/empty passes through unchanged."""
+    if not twins:
+        return twins
+    out: dict = {}
+    for name, ver in twins.items():
+        if name not in DOMAINS:
+            continue
+        if not ver:
+            d = _REGISTRY / name
+            vers = sorted(p.name for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
+            ver = vers[-1] if vers else None
+        if ver:
+            out[name] = ver
+    return out
+
+
+@app.post("/sandbox/run")
+async def sandbox_run(payload: dict, x_sandbox_secret: str | None = Header(None)):
+    """Execute a workflow run delegated from the product backend (Fly): run the
+    customer's repo in the VM with the given twins, bake the task prompt in as
+    GAUNTLET_TASK_PROMPT, and POST the outcome to callback_url on finish.
+
+    Body: {repo, sha, installation_id, ref?, task_prompt?, twins?, modes?,
+           workflow_id?, callback_url?, callback_secret?}.
+    twins/modes are already resolved to {service: version} / {service: mode} by
+    the caller (only services with a shipped twin registry entry)."""
+    if config.SANDBOX_INBOUND_SECRET and not hmac.compare_digest(
+            x_sandbox_secret or "", config.SANDBOX_INBOUND_SECRET):
+        raise HTTPException(401, "bad sandbox secret")
+    from . import runner
+
+    twins = _resolve_twins(payload.get("twins"))
+    try:
+        job = runner.Job(
+            repo=payload["repo"], sha=payload["sha"],
+            ref=payload.get("ref", payload["sha"]),
+            installation_id=int(payload["installation_id"]),
+            task_prompt=payload.get("task_prompt"),
+            twins=twins,
+            modes=payload.get("modes") or {},
+            workflow_id=payload.get("workflow_id"),
+            egress_default=payload.get("egress_default", "live"),
+            callback_url=payload.get("callback_url"),
+            callback_secret=payload.get("callback_secret"))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "need repo, sha, installation_id")
+    runner.submit(job)
+    return {"queued": True, "workflow_id": payload.get("workflow_id")}
 
 
 @app.post("/slack/command")

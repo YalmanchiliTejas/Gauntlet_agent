@@ -62,8 +62,10 @@ fi
 
 DB_URL="$(grep -E '^DATABASE_URL=' "$APP_DIR/.env" | cut -d= -f2- || true)"
 if [ -n "$DB_URL" ]; then
-  echo "==> apply migrations"
-  psql "$DB_URL" -f "$APP_DIR/migrations/0001_backend.sql"
+  echo "==> apply migrations (idempotent, in order)"
+  for m in "$APP_DIR"/migrations/[0-9]*.sql; do
+    echo "    $m"; psql "$DB_URL" -f "$m"
+  done
 else
   echo "!! DATABASE_URL empty in .env — skipping migrations (persistence disabled)"
 fi

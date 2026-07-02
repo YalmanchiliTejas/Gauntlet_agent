@@ -91,10 +91,11 @@ class Store:
     # ---------- runs (agent trace + judge verdict) ----------
 
     def create_run(self, *, user_id: str | None, repo: str, sha: str,
-                   ref: str | None) -> str | None:
+                   ref: str | None, workflow_id: str | None = None) -> str | None:
         row = self._exec(
-            "insert into runs (user_id, repo, sha, ref) values (%s, %s, %s, %s) returning id",
-            (user_id, repo, sha, ref), fetch="one")
+            "insert into runs (user_id, repo, sha, ref, workflow_id) "
+            "values (%s, %s, %s, %s, %s) returning id",
+            (user_id, repo, sha, ref, workflow_id), fetch="one")
         return str(row["id"]) if row else None
 
     def finish_run(self, *, run_id: str | None, status: str,
@@ -116,8 +117,8 @@ class Store:
 
     def get_run(self, run_id: str) -> dict | None:
         return self._exec(
-            "select id, user_id, repo, sha, ref, status, exit_code, verdict, trajectory, "
-            "error, created_at, finished_at from runs where id = %s",
+            "select id, user_id, workflow_id, repo, sha, ref, status, exit_code, verdict, "
+            "trajectory, error, created_at, finished_at from runs where id = %s",
             (run_id,), fetch="one")
 
     def list_runs(self, *, user_id: str | None = None, repo: str | None = None,
@@ -130,7 +131,7 @@ class Store:
             clauses.append("repo = %s"); params.append(repo)
         where = ("where " + " and ".join(clauses)) if clauses else ""
         return self._exec(
-            f"select id, user_id, repo, sha, ref, status, exit_code, verdict, error, "
+            f"select id, user_id, workflow_id, repo, sha, ref, status, exit_code, verdict, error, "
             f"created_at, finished_at from runs {where} order by created_at desc limit %s",
             (*params, limit), fetch="all")
 

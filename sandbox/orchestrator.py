@@ -55,10 +55,12 @@ def _free_port() -> int:
 
 
 class Sandbox:
-    def __init__(self, services: dict, modes: dict | None = None, webhook_url: str | None = None):
+    def __init__(self, services: dict, modes: dict | None = None, webhook_url: str | None = None,
+                 egress_default: str = "deny"):
         self.services = services            # {name: version}
         self.modes = modes or {}
         self.webhook_url = webhook_url
+        self.egress_default = egress_default  # deny | live (passthrough undeclared)
         self.procs: list[subprocess.Popen] = []
         self.dir = Path(tempfile.mkdtemp(prefix="sandbox-"))
         self.proxy_url = ""
@@ -92,7 +94,8 @@ class Sandbox:
              "--set", "connection_strategy=lazy"],
             env={**os.environ, "ROUTING_TABLE": str(routing),
                  "FIXTURES_DIR": str(self.dir / "fixtures"),
-                 "EGRESS_LOG": str(self.egress_log)}))
+                 "EGRESS_LOG": str(self.egress_log),
+                 "EGRESS_DEFAULT": self.egress_default}))
         self.proxy_url = f"http://127.0.0.1:{proxy_port}"
 
         # Wait for the proxy port + the generated CA so the sandbox can trust it.

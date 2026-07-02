@@ -25,10 +25,17 @@ def load_table(path: str) -> dict:
     return json.loads(Path(path).read_text())
 
 
-def decide(host: str, table: dict) -> dict:
-    """Pure routing decision for a destination host. Default-deny."""
+def decide(host: str, table: dict, default: str = "deny") -> dict:
+    """Pure routing decision for a destination host.
+
+    `default` is what happens to a host not in the table:
+      deny (safety default, PR-check runs) | live (passthrough to the real
+      endpoint, for workflow runs where the agent must reach services it isn't
+      twinning — its LLM API, its own backend, etc.)."""
     route = table.get(host)
     if route is None:
+        if default == "live":
+            return {"action": "forward", "mode": "live", "service": host}
         return {"action": "deny", "reason": "domain not declared"}
     mode = route.get("mode")
     service = route.get("service", host)
@@ -44,6 +51,7 @@ def decide(host: str, table: dict) -> dict:
 class Egress:
     def __init__(self):
         self._table = None
+        self._default = os.environ.get("EGRESS_DEFAULT", "deny")
 
     @property
     def table(self) -> dict:
@@ -53,7 +61,7 @@ class Egress:
 
     def request(self, flow) -> None:
         from mitmproxy import http
-        d = decide(flow.request.pretty_host, self.table)
+        d = decide(flow.request.pretty_host, self.table, self._default)
         flow.metadata["service"] = d.get("service", flow.request.pretty_host)
         if d["action"] == "deny":
             flow.metadata["egress_mode"] = "deny"

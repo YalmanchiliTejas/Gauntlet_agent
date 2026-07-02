@@ -67,6 +67,18 @@ class Job:
     sha: str             # exact commit to run
     ref: str             # branch/PR ref, used as the debounce key
     installation_id: int
+    # Workflow-run overrides (a /workflows/{id}/run job). When set, the declared
+    # twins replace the repo's .gauntlet.json ones and the task prompt is baked
+    # into the VM as GAUNTLET_TASK_PROMPT for the agent to read.
+    task_prompt: str | None = None
+    twins: dict | None = None      # {service: version}; None = use the repo's plan
+    modes: dict | None = None      # {service: twin|live|record}
+    workflow_id: str | None = None
+    egress_default: str = "deny"   # deny (PR checks) | live (workflow runs: undeclared -> real)
+    # When set, POST the outcome here on finish (the Fly backend delegates to us
+    # and stores the result in its own DB via this callback).
+    callback_url: str | None = None
+    callback_secret: str | None = None
 
 
 # ponytail: in-memory, single-process. One task per (repo, ref); a newer push
@@ -129,16 +141,22 @@ async def _fetch_trajectory(endpoint: str, vm_token: str, workdir: Path,
     return None
 
 
-async def run_and_judge(root: Path, plan, name: str, workdir: Path) -> dict:
+async def run_and_judge(root: Path, plan, name: str, workdir: Path,
+                        extra_env: dict | None = None, egress_default: str = "deny") -> dict:
     """Build+run the agent in a MicroVM, capture result + trajectory, judge it, teardown.
     Returns {"result", "verdict" (dict), "trajectory": Path|None}. Shared by the check runner
-    and the fixer's verification loop. Holds no GitHub token — vm_token stays local."""
+    and the fixer's verification loop. Holds no GitHub token — vm_token stays local.
+    `extra_env` bakes extra vars into the image (e.g. GAUNTLET_TASK_PROMPT for a workflow run).
+    `egress_default` = deny (default) | live (undeclared domains passthrough to the real host).
+    With `live`, the proxy runs even when no twins are declared, so egress is still logged."""
     sandbox = None
     microvm_id = None
     try:
         env, ca_pem = _otel_env(), None  # always capture the agent trajectory
-        if plan.twins:
-            sandbox = Sandbox(plan.twins, plan.modes).start()
+        if extra_env:
+            env.update(extra_env)
+        if plan.twins or egress_default != "deny":
+            sandbox = Sandbox(plan.twins, plan.modes, egress_default=egress_default).start()
             env.update(sandbox.env_for_sandbox())
             ca_pem = Path(sandbox.ca).read_bytes()  # bake the proxy CA into the image
         key = microvm.upload_bundle(root, plan.dockerfile, ca_pem=ca_pem, env=env)
@@ -166,7 +184,11 @@ async def _run(job: Job) -> None:
     try:
         root = await github.download_source(gh_token, job.repo, job.sha, workdir)
         plan = build_resolver.resolve(root)
-        out = await run_and_judge(root, plan, f"{job.repo.replace('/', '-')}-{job.sha[:7]}", workdir)
+        if job.twins is not None:  # workflow run: its declared twins replace the repo's
+            plan.twins, plan.modes = job.twins, job.modes or {}
+        extra_env = {"GAUNTLET_TASK_PROMPT": job.task_prompt} if job.task_prompt else None
+        out = await run_and_judge(root, plan, f"{job.repo.replace('/', '-')}-{job.sha[:7]}", workdir,
+                                  extra_env=extra_env, egress_default=job.egress_default)
         result = out["result"]
         ok = result.get("exit_code") == 0
         summary = (f"`{plan.run}` exited {result.get('exit_code')}\n\n"
@@ -176,20 +198,42 @@ async def _run(job: Job) -> None:
         _persist_run_finish(run_id, "passed" if ok else "failed",
                             exit_code=result.get("exit_code"), verdict=out["verdict"],
                             trajectory=out.get("trajectory"))
+        await _fire_callback(job, "passed" if ok else "failed",
+                             exit_code=result.get("exit_code"), verdict=out["verdict"])
         await github.complete_check_run(gh_token, job.repo, check_id,
                                         "success" if ok else "failure",
                                         "Passed" if ok else "Failed", summary)
     except asyncio.CancelledError:
         _persist_run_finish(run_id, "canceled", error="Superseded by a newer push.")
+        await _fire_callback(job, "canceled", error="Superseded by a newer push.")
         await github.complete_check_run(gh_token, job.repo, check_id, "cancelled",
                                         "Superseded", "A newer push cancelled this run.")
         raise
     except Exception as e:  # report, don't swallow
         _persist_run_finish(run_id, "error", error=str(e))
+        await _fire_callback(job, "error", error=str(e))
         await github.complete_check_run(gh_token, job.repo, check_id, "failure",
                                         "Run failed", f"```\n{e}\n```")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)  # don't persist source
+
+
+async def _fire_callback(job: Job, status: str, *, exit_code: int | None = None,
+                         verdict: dict | None = None, error: str | None = None) -> None:
+    """Report the outcome to the delegating backend (Fly). Best-effort — a failed
+    callback must never fail the run. Trajectory is omitted (can be large); the
+    verdict carries the judge summary the UI needs."""
+    if not job.callback_url:
+        return
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(job.callback_url,
+                         headers={"Authorization": f"Bearer {job.callback_secret or ''}"},
+                         json={"status": status, "exit_code": exit_code,
+                               "verdict": verdict, "error": error,
+                               "workflow_id": job.workflow_id})
+    except Exception:
+        pass
 
 
 # Persistence is best-effort: a database hiccup must never fail a run.
@@ -198,7 +242,8 @@ def _persist_run_start(job: Job) -> str | None:
         s = store()
         user = s.upsert_user(github_installation_id=job.installation_id)
         return s.create_run(user_id=user["id"] if user else None,
-                            repo=job.repo, sha=job.sha, ref=job.ref)
+                            repo=job.repo, sha=job.sha, ref=job.ref,
+                            workflow_id=job.workflow_id)
     except Exception:
         return None
 
