@@ -9,3 +9,4 @@ proxy/routing.json
 sandbox-*/
 
 *.egg-info/
+.gstack/
