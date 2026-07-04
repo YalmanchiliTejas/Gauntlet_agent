@@ -5,6 +5,13 @@ export type GenerateInput = {
   services: { name: string; version?: string | null }[];
   count: number;
   workflowName?: string;
+  focus?: string;
+  existingWorkflows?: Array<{
+    name: string;
+    description?: string | null;
+    task_prompt?: string | null;
+    draft?: Record<string, unknown> | null;
+  }>;
 };
 
 // A row ready to insert into sandbox_workflows (minus sandbox_id/user_id).
@@ -56,6 +63,7 @@ function applyWorkflowName(rows: DraftRow[], workflowName?: string): DraftRow[] 
 // (generate_workflows_json) when GAUNTLET_WORKFLOW_URL is set; otherwise
 // derives one draft per doc so the flow still works without the backend.
 export async function generateDrafts(input: GenerateInput): Promise<DraftRow[]> {
+  const focus = input.focus?.trim();
   const base = process.env.GAUNTLET_WORKFLOW_URL?.replace(/\/$/, "");
   if (base) {
     try {
@@ -71,6 +79,8 @@ export async function generateDrafts(input: GenerateInput): Promise<DraftRow[]> 
             name: s.name,
             version: s.version ?? undefined,
           })),
+          focus,
+          existing_workflows: input.existingWorkflows ?? [],
           coverage: { count: input.count },
         }),
         cache: "no-store",
@@ -90,15 +100,19 @@ export async function generateDrafts(input: GenerateInput): Promise<DraftRow[]> 
   // Fallback: one draft per human-provided doc.
   const services = input.services.map((s) => ({ name: s.name, version: s.version ?? null }));
   const rows = input.docs.slice(0, input.count).map((doc) => ({
-    name: doc.title,
+    name: focus ? `${doc.title}: ${focus}` : doc.title,
     description: firstSentence(doc.text),
     difficulty: "medium",
-    task_prompt: doc.text,
+    task_prompt: focus ? `${doc.text}\n\nFocus this workflow on: ${focus}` : doc.text,
     draft: {
-      name: doc.title,
+      name: focus ? `${doc.title}: ${focus}` : doc.title,
       description: firstSentence(doc.text),
-      task_prompt: doc.text,
+      task_prompt: focus ? `${doc.text}\n\nFocus this workflow on: ${focus}` : doc.text,
       services,
+      focus: focus ?? null,
+      focus_alignment_reason: focus
+        ? `The user explicitly asked generation to focus on ${focus}.`
+        : null,
       source_doc: doc.url ?? doc.title,
     },
   }));

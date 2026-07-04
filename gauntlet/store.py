@@ -121,6 +121,14 @@ class Store:
             "trajectory, error, created_at, finished_at from runs where id = %s",
             (run_id,), fetch="one")
 
+    def get_run_by_workflow_id(self, workflow_id: str) -> dict | None:
+        """Look up a run by the caller-supplied workflow_id (e.g. the Supabase run UUID)."""
+        return self._exec(
+            "select id, user_id, workflow_id, repo, sha, ref, status, exit_code, verdict, "
+            "trajectory, error, created_at, finished_at from runs where workflow_id = %s "
+            "order by created_at desc limit 1",
+            (workflow_id,), fetch="one")
+
     def list_runs(self, *, user_id: str | None = None, repo: str | None = None,
                   limit: int = 50) -> list[dict]:
         limit = max(1, min(limit, 200))

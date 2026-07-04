@@ -5,8 +5,10 @@ import { cn } from "@/lib/utils";
 const styles: Record<RunStatus, string> = {
   queued: "bg-slate-100 text-slate-700",
   running: "bg-blue-50 text-blue-700",
+  succeeded: "bg-emerald-50 text-emerald-700",
   passed: "bg-emerald-50 text-emerald-700",
   failed: "bg-red-50 text-red-700",
+  canceled: "bg-slate-100 text-slate-500",
   error: "bg-amber-50 text-amber-700",
 };
 

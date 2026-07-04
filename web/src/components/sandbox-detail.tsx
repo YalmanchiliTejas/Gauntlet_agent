@@ -15,6 +15,7 @@ import {
   Loader2,
   GitBranch,
   GitFork,
+  Sparkles,
   RotateCcw,
   Save,
   RefreshCw,
@@ -35,6 +36,7 @@ import {
   getSimulationScenario,
   getSandbox,
   listSandboxEnvVars,
+  listSandboxWorkflows,
   listSandboxOptions,
   saveSimulationScenario,
   saveSandboxEnvVars,
@@ -43,8 +45,10 @@ import {
   type SandboxOptionData,
   type SimulationProfile,
   type SimulationScenario,
+  type Workflow,
 } from "@/lib/sandbox-api";
 import { useSandboxStore } from "@/components/sandbox-store";
+import { GenerateWorkflowSheet } from "@/components/workflows-workspace";
 import { twinIconMap, twinOptions, type Sandbox, type SandboxStatus, type TwinOption } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
@@ -202,12 +206,90 @@ function SandboxBody({ sandbox: initialSandbox }: { sandbox: Sandbox }) {
         </CardContent>
       </Card>
 
+      <SandboxWorkflowsCard sandbox={sandbox} />
       <EnvVarsCard sandbox={sandbox} />
 
       <div id="simulation-data" className="scroll-mt-6">
         <SimulationDataCard sandbox={sandbox} />
       </div>
     </>
+  );
+}
+
+function SandboxWorkflowsCard({ sandbox }: { sandbox: Sandbox }) {
+  const [workflows, setWorkflows] = React.useState<Workflow[] | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setError(null);
+    try {
+      setWorkflows(await listSandboxWorkflows(sandbox.id));
+    } catch {
+      setError("Could not load workflows for this sandbox.");
+    }
+  }, [sandbox.id]);
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  return (
+    <Card className="rounded-lg shadow-none">
+      <CardHeader className="flex flex-row items-center justify-between border-b">
+        <CardTitle className="text-base">Workflows</CardTitle>
+        <GenerateWorkflowSheet
+          sandboxes={[sandbox]}
+          onGenerated={load}
+          trigger={
+            <Button size="sm">
+              <Sparkles />
+              Generate
+            </Button>
+          }
+        />
+      </CardHeader>
+      <CardContent className="p-4">
+        {error ? (
+          <p className="text-sm text-red-700">{error}</p>
+        ) : workflows === null ? (
+          <div className="grid gap-2">
+            <Skeleton className="h-14 rounded-lg" />
+            <Skeleton className="h-14 rounded-lg" />
+          </div>
+        ) : workflows.length > 0 ? (
+          <div className="grid gap-2">
+            {workflows.map((workflow) => (
+              <div key={workflow.id} className="rounded-lg border bg-card p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-medium">{workflow.name}</div>
+                  {workflow.difficulty && (
+                    <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px]">
+                      {workflow.difficulty}
+                    </Badge>
+                  )}
+                </div>
+                {workflow.description && (
+                  <p className="mt-1 text-sm text-muted-foreground">{workflow.description}</p>
+                )}
+                {workflow.focus && (
+                  <p className="mt-1 text-xs text-muted-foreground">Focus: {workflow.focus}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-lg border border-dashed p-5 text-center">
+            <p className="text-sm font-medium">No workflows assigned yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Generate workflows here so they inherit this sandbox&apos;s docs, repo, branch, and twins.
+            </p>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 

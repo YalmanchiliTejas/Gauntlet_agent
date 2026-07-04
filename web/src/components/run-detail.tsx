@@ -23,10 +23,12 @@ import { RunStatusBadge } from "@/components/run-status-badge";
 import {
   fixRun,
   getRun,
+  pollRunStatus,
   reviewRun,
   type ReviewFinding,
   type ReviewSeverity,
   type Run,
+  type RunStatus,
   type TraceStep,
 } from "@/lib/sandbox-api";
 import { cn } from "@/lib/utils";
@@ -63,6 +65,23 @@ export function RunDetail({ id }: { id: string }) {
     }, 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  // Poll for status updates while the run is active (queued or running).
+  React.useEffect(() => {
+    const TERMINAL: RunStatus[] = ["succeeded", "passed", "failed", "canceled", "error"];
+    if (!run || TERMINAL.includes(run.status)) return;
+
+    const interval = window.setInterval(async () => {
+      try {
+        const { run: updated } = await pollRunStatus(id);
+        setRun(updated);
+      } catch {
+        // Ignore poll errors — next interval will retry.
+      }
+    }, 4000);
+
+    return () => window.clearInterval(interval);
+  }, [id, run]);
 
   async function review() {
     setReviewing(true);

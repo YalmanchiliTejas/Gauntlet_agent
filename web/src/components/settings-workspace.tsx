@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { toast } from "sonner";
 import {
   AlertCircle,
   Boxes,
@@ -9,9 +10,11 @@ import {
   Database,
   GitFork,
   KeyRound,
+  Loader2,
   LogOut,
   Mail,
   RefreshCw,
+  Unplug,
   User,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
@@ -20,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  disconnectGitHubInstallation,
   listSandboxOptions,
   listSandboxes,
   signOut,
@@ -37,6 +41,7 @@ export function SettingsWorkspace() {
   const [session, setSession] = React.useState<SessionState | null>(null);
   const [sandboxCount, setSandboxCount] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
+  const [disconnecting, setDisconnecting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
@@ -69,6 +74,29 @@ export function SettingsWorkspace() {
     await signOut();
     window.location.assign("/login");
   }, []);
+
+  async function disconnectGitHub() {
+    const installationId = options?.connection.installationId;
+    if (!installationId) {
+      return;
+    }
+
+    setDisconnecting(true);
+    setError(null);
+    try {
+      await disconnectGitHubInstallation(installationId);
+      toast.success("GitHub disconnected", {
+        description: "The GitHub App was uninstalled from GitHub and unlinked from Gauntlet.",
+      });
+      await load();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not disconnect GitHub.";
+      setError(message);
+      toast.error("Could not disconnect GitHub", { description: message });
+    } finally {
+      setDisconnecting(false);
+    }
+  }
 
   return (
     <AppShell>
@@ -135,7 +163,18 @@ export function SettingsWorkspace() {
                 label={options?.connection.connected ? "Connected" : "Not connected"}
                 detail={options?.connection.message ?? "Load settings to inspect GitHub status."}
                 action={
-                  !options?.connection.connected && options?.connection.installUrl ? (
+                  options?.connection.connected && options.connection.installationId ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => void disconnectGitHub()}
+                      disabled={disconnecting}
+                    >
+                      {disconnecting ? <Loader2 className="size-3.5 animate-spin" /> : <Unplug />}
+                      Disconnect
+                    </Button>
+                  ) : options?.connection.installUrl ? (
                     <Button size="sm" render={<a href={options.connection.installUrl} />}>
                       <GitFork />
                       Connect

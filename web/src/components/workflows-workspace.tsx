@@ -21,6 +21,7 @@ import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -35,11 +36,13 @@ import {
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
+  assignWorkflowToSandboxes,
   createRun,
   deleteWorkflow,
   generateWorkflows,
   listSandboxes,
   listWorkflows,
+  removeWorkflowFromSandbox,
   updateWorkflow,
   type DocInput,
   type Workflow,
@@ -90,7 +93,7 @@ export function WorkflowsWorkspace() {
           <div>
             <h1 className="text-2xl font-semibold tracking-normal text-foreground">Workflows</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Generate agent tasks from your docs and the twins in a sandbox.
+              Reuse generated agent tasks across sandboxes without losing sandbox-specific runs.
             </p>
           </div>
           <GenerateWorkflowSheet sandboxes={sandboxes} onGenerated={load} />
@@ -114,6 +117,7 @@ export function WorkflowsWorkspace() {
                       key={workflow.id}
                       workflow={workflow}
                       sandbox={sandboxes.find((item) => item.id === workflow.sandboxId) ?? null}
+                      sandboxes={sandboxes}
                       onChanged={load}
                     />
                   ))}
@@ -132,10 +136,12 @@ export function WorkflowsWorkspace() {
 function WorkflowCard({
   workflow,
   sandbox,
+  sandboxes,
   onChanged,
 }: {
   workflow: Workflow;
   sandbox: Sandbox | null;
+  sandboxes: Sandbox[];
   onChanged: () => void | Promise<void>;
 }) {
   const router = useRouter();
@@ -143,9 +149,14 @@ function WorkflowCard({
   const [deleting, setDeleting] = React.useState(false);
 
   async function run() {
+    const assignmentId = workflow.assignmentId ?? workflow.id;
+    if (!workflow.sandboxId || !assignmentId) {
+      toast.error("Assign this workflow to a sandbox before running it.");
+      return;
+    }
     setRunning(true);
     try {
-      const created = await createRun(workflow.sandboxId, workflow.id);
+      const created = await createRun(workflow.sandboxId, assignmentId);
       toast.success("Run started");
       router.push(`/runs/${created.id}`);
     } catch {
@@ -159,7 +170,7 @@ function WorkflowCard({
     if (!confirmed) return;
     setDeleting(true);
     try {
-      await deleteWorkflow(workflow.id);
+      await deleteWorkflow(workflow.canonicalId ?? workflow.id);
       toast.success("Workflow deleted");
       await onChanged();
     } catch {
@@ -191,8 +202,17 @@ function WorkflowCard({
                 {sandbox.name} · {sandbox.branch}
               </span>
             )}
+            {typeof workflow.assignedSandboxCount === "number" && (
+              <span>
+                {workflow.assignedSandboxCount} sandbox{workflow.assignedSandboxCount === 1 ? "" : "es"}
+              </span>
+            )}
             <span>{new Date(workflow.createdAt).toLocaleString()}</span>
           </div>
+          {workflow.focus && <p className="mt-2 text-xs text-muted-foreground">Focus: {workflow.focus}</p>}
+          {workflow.noveltyReason && (
+            <p className="mt-1 text-xs text-muted-foreground">Novelty: {workflow.noveltyReason}</p>
+          )}
           <div className="mt-2 flex flex-wrap gap-1.5">
             {workflow.services.map((service) => (
               <Badge key={service} variant="outline" className="h-6 rounded-md bg-background px-2 font-normal">
@@ -203,6 +223,21 @@ function WorkflowCard({
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
           <EditWorkflowSheet workflow={workflow} onSaved={onChanged} />
+          <AssignWorkflowSheet workflow={workflow} sandboxes={sandboxes} onAssigned={onChanged} />
+          {sandbox && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={async () => {
+                await removeWorkflowFromSandbox(sandbox.id, workflow.canonicalId ?? workflow.id);
+                toast.success("Workflow removed from sandbox");
+                await onChanged();
+              }}
+            >
+              <X />
+              Remove
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={remove} disabled={deleting}>
             {deleting ? <Loader2 className="animate-spin" /> : <Trash2 />}
             Delete
@@ -214,6 +249,87 @@ function WorkflowCard({
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function AssignWorkflowSheet({
+  workflow,
+  sandboxes,
+  onAssigned,
+}: {
+  workflow: Workflow;
+  sandboxes: Sandbox[];
+  onAssigned: () => void | Promise<void>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const [selected, setSelected] = React.useState<string[]>([]);
+  const [saving, setSaving] = React.useState(false);
+  const assigned = new Set(workflow.sandboxIds ?? (workflow.sandboxId ? [workflow.sandboxId] : []));
+  const available = sandboxes.filter((sandbox) => !assigned.has(sandbox.id));
+
+  function toggle(id: string, checked: boolean) {
+    setSelected((current) => checked ? [...current, id] : current.filter((item) => item !== id));
+  }
+
+  async function assign() {
+    const canonicalId = workflow.canonicalId ?? workflow.id;
+    if (selected.length === 0) return;
+    setSaving(true);
+    try {
+      await assignWorkflowToSandboxes(canonicalId, selected);
+      toast.success("Workflow assigned");
+      setOpen(false);
+      setSelected([]);
+      await onAssigned();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not assign workflow.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Sheet open={open} onOpenChange={setOpen}>
+      <SheetTrigger render={<Button variant="outline" size="sm" />}>
+        <Plus />
+        Assign
+      </SheetTrigger>
+      <SheetContent className="w-full border-l bg-card p-0 sm:max-w-none md:!w-[460px]">
+        <SheetHeader className="border-b px-6 py-5">
+          <SheetTitle>Assign workflow</SheetTitle>
+          <SheetDescription>Add this reusable workflow to other sandboxes.</SheetDescription>
+        </SheetHeader>
+        <div className="flex-1 space-y-3 overflow-y-auto px-6 py-5">
+          {available.length === 0 ? (
+            <p className="text-sm text-muted-foreground">This workflow is already assigned to every sandbox.</p>
+          ) : (
+            available.map((sandbox) => (
+              <label
+                key={sandbox.id}
+                className="flex cursor-pointer items-start gap-3 rounded-lg border bg-card p-3"
+              >
+                <Checkbox
+                  checked={selected.includes(sandbox.id)}
+                  onCheckedChange={(checked) => toggle(sandbox.id, checked === true)}
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium">{sandbox.name}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {sandbox.repo} · {sandbox.branch}
+                  </span>
+                </span>
+              </label>
+            ))
+          )}
+        </div>
+        <SheetFooter className="border-t px-6 py-4">
+          <Button onClick={assign} disabled={saving || selected.length === 0} className="w-full">
+            {saving ? <Loader2 className="animate-spin" /> : <Plus />}
+            {saving ? "Assigning…" : "Assign to selected sandboxes"}
+          </Button>
+        </SheetFooter>
+      </SheetContent>
+    </Sheet>
   );
 }
 
@@ -348,7 +464,7 @@ function EditWorkflowSheet({
   );
 }
 
-function GenerateWorkflowSheet({
+export function GenerateWorkflowSheet({
   sandboxes,
   onGenerated,
   trigger,
@@ -360,6 +476,7 @@ function GenerateWorkflowSheet({
   const [open, setOpen] = React.useState(false);
   const [sandboxId, setSandboxId] = React.useState("");
   const [workflowName, setWorkflowName] = React.useState("");
+  const [focus, setFocus] = React.useState("");
   const [docs, setDocs] = React.useState<DocInput[]>([{ title: "", text: "" }]);
   const [count, setCount] = React.useState(3);
   const [generating, setGenerating] = React.useState(false);
@@ -390,10 +507,18 @@ function GenerateWorkflowSheet({
     setGenerating(true);
     setError(null);
     try {
-      const created = await generateWorkflows({ sandboxId, workflowName, docs: filled, services, count });
+      const created = await generateWorkflows({
+        sandboxId,
+        workflowName,
+        focus,
+        docs: filled,
+        services,
+        count,
+      });
       toast.success(`Generated ${created.length} workflow${created.length === 1 ? "" : "s"}`);
       setOpen(false);
       setWorkflowName("");
+      setFocus("");
       setDocs([{ title: "", text: "" }]);
       await onGenerated();
     } catch (err) {
@@ -460,6 +585,39 @@ function GenerateWorkflowSheet({
             <p className="text-xs text-muted-foreground">
               For multiple workflows this is used as a numbered prefix.
             </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="workflow-focus">Focus</Label>
+            <Input
+              id="workflow-focus"
+              placeholder="Billing recovery, OAuth setup, multi-service onboarding..."
+              value={focus}
+              onChange={(event) => setFocus(event.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Optional. Use this to target a product area, risk, integration, or failure mode.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {[
+                "Happy paths",
+                "Edge cases",
+                "Multi-service workflows",
+                "Failure recovery",
+                "Security-sensitive flows",
+                "Regression coverage",
+              ].map((item) => (
+                <Button
+                  key={item}
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setFocus(item)}
+                >
+                  {item}
+                </Button>
+              ))}
+            </div>
           </div>
 
           <div className="space-y-3">

@@ -2,7 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getServerSupabase, isDevBypass } from "@/lib/server/supabase";
 import { mockWorkflows } from "@/lib/mock-data";
-import { rowToWorkflow, WORKFLOW_COLUMNS, type WorkflowRow } from "@/lib/server/workflow-map";
+import {
+  canonicalRowToWorkflow,
+  CANONICAL_WORKFLOW_COLUMNS,
+  rowToWorkflow,
+  WORKFLOW_COLUMNS,
+  type CanonicalWorkflowRow,
+  type WorkflowRow,
+} from "@/lib/server/workflow-map";
+import { workflowFingerprint } from "@/lib/server/workflow-dedupe";
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -53,6 +61,24 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     });
   }
 
+  const canonicalPatch = {
+    ...patch,
+    fingerprint: workflowFingerprint(patch),
+    updated_at: new Date().toISOString(),
+  };
+  const canonical = await supabase
+    .from("workflows")
+    .update(canonicalPatch)
+    .eq("id", id)
+    .select(CANONICAL_WORKFLOW_COLUMNS)
+    .maybeSingle();
+  if (!canonical.error && canonical.data) {
+    return NextResponse.json({
+      workflow: canonicalRowToWorkflow(canonical.data as unknown as CanonicalWorkflowRow),
+      source: "supabase",
+    });
+  }
+
   const { data, error } = await supabase
     .from("sandbox_workflows")
     .update(patch)
@@ -77,6 +103,11 @@ export async function DELETE(_request: NextRequest, { params }: { params: Promis
       return NextResponse.json({ detail: "Sign in to delete workflows." }, { status: 401 });
     }
     return NextResponse.json({ ok: true, source: "dev-bypass" });
+  }
+
+  const canonicalDelete = await supabase.from("workflows").delete().eq("id", id);
+  if (!canonicalDelete.error) {
+    return NextResponse.json({ ok: true, source: "supabase" });
   }
 
   const { error } = await supabase.from("sandbox_workflows").delete().eq("id", id);

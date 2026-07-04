@@ -6,6 +6,7 @@ import { backendFetch } from "@/lib/server/gauntlet-backend";
 type BackendBranch = {
   name: string;
   protected?: boolean | null;
+  commit_sha?: string | null;
 };
 
 export async function GET(request: NextRequest) {
@@ -28,6 +29,7 @@ export async function GET(request: NextRequest) {
       branches: payload.branches.map((branch) => ({
         name: branch.name,
         protected: Boolean(branch.protected),
+        sha: branch.commit_sha ?? null,
       })),
       source: "github_app",
     });

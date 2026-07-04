@@ -44,16 +44,24 @@ export type DocInput = { title: string; text: string; url?: string };
 export type Workflow = {
   id: string;
   sandboxId: string;
+  canonicalId?: string | null;
+  sandboxIds?: string[];
+  assignedSandboxCount?: number;
+  assignmentId?: string | null;
+  sourceSandboxId?: string | null;
   name: string;
   description: string | null;
   difficulty: string | null;
   taskPrompt: string | null;
   services: string[];
+  focus?: string | null;
+  fingerprint?: string | null;
+  noveltyReason?: string | null;
   createdAt: string;
 };
 
 export type TraceStep = Record<string, unknown>;
-export type RunStatus = "queued" | "running" | "passed" | "failed" | "error";
+export type RunStatus = "queued" | "running" | "succeeded" | "passed" | "failed" | "canceled" | "error";
 
 export type ReviewSeverity = "low" | "med" | "high";
 // One judge finding, code-reviewer style: it tags specific trace steps.
@@ -113,6 +121,14 @@ export async function listWorkflows(): Promise<Workflow[]> {
   return (await fetchJson<{ workflows: Workflow[] }>("/api/workflows")).workflows;
 }
 
+export async function listSandboxWorkflows(sandboxId: string): Promise<Workflow[]> {
+  return (
+    await fetchJson<{ workflows: Workflow[] }>(
+      `/api/sandboxes/${encodeURIComponent(sandboxId)}/workflows`,
+    )
+  ).workflows;
+}
+
 export async function updateWorkflow(
   id: string,
   input: Pick<Workflow, "name" | "description" | "difficulty" | "taskPrompt" | "services">,
@@ -132,6 +148,7 @@ export async function deleteWorkflow(id: string): Promise<void> {
 export async function generateWorkflows(input: {
   sandboxId: string;
   workflowName?: string;
+  focus?: string;
   docs: DocInput[];
   services: { name: string; version?: string | null }[];
   count: number;
@@ -141,6 +158,24 @@ export async function generateWorkflows(input: {
     { method: "POST", body: JSON.stringify(input) },
   );
   return payload.workflows;
+}
+
+export async function assignWorkflowToSandboxes(
+  workflowId: string,
+  sandboxIds: string[],
+): Promise<Workflow[]> {
+  const payload = await fetchJson<{ workflows: Workflow[] }>(
+    `/api/workflows/${encodeURIComponent(workflowId)}/sandboxes`,
+    { method: "POST", body: JSON.stringify({ sandboxIds }) },
+  );
+  return payload.workflows;
+}
+
+export async function removeWorkflowFromSandbox(sandboxId: string, workflowId: string): Promise<void> {
+  await fetchJson(
+    `/api/sandboxes/${encodeURIComponent(sandboxId)}/workflows/${encodeURIComponent(workflowId)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function listRuns(): Promise<Run[]> {
@@ -157,6 +192,10 @@ export async function createRun(sandboxId: string, workflowId: string): Promise<
     { method: "POST", body: JSON.stringify({ workflowId }) },
   );
   return payload.run;
+}
+
+export async function pollRunStatus(id: string): Promise<{ run: Run; synced: boolean }> {
+  return fetchJson<{ run: Run; synced: boolean }>(`/api/runs/${encodeURIComponent(id)}/status`);
 }
 
 export async function fixRun(id: string): Promise<Run> {
@@ -283,6 +322,12 @@ export async function linkGitHubInstallation(installationId: string): Promise<vo
   });
 }
 
+export async function disconnectGitHubInstallation(installationId: number): Promise<void> {
+  await fetchJson(`/api/github/installations?installationId=${installationId}`, {
+    method: "DELETE",
+  });
+}
+
 export async function signInWithToken(accessToken: string): Promise<void> {
   await fetchJson("/api/session", {
     method: "POST",
@@ -301,6 +346,7 @@ export const requiredGithubUiEndpoints = [
   "GET /api/sandboxes/options",
   "GET /api/sandboxes/branches",
   "POST /api/github/installations",
+  "DELETE /api/github/installations",
   "POST /api/sandboxes",
   "GET /api/sandboxes",
 ];

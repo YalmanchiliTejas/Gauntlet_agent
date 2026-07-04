@@ -363,3 +363,54 @@ python -c "import ast, pathlib; [ast.parse(pathlib.Path(p).read_text(), filename
 - `npm run build`: passed.
 - Old backend GitHub/config files pass AST syntax parsing.
 - Dev server starts on an alternate port, but local `curl` cannot connect to the reported port in this sandbox. This appears to be an environment networking limitation seen in prior checks, not a compile/runtime route issue.
+
+## Workflow Reuse And Focused Generation
+
+### What Changed
+
+- Added `docs/agent-context/workflow-sandbox-association-plan.md`.
+- Added `migrations/0007_reusable_workflows.sql`.
+  - Canonical `workflows` table.
+  - `sandbox_workflows.workflow_id` assignment link.
+  - Backfill from existing sandbox workflow rows.
+  - Unique `(sandbox_id, workflow_id)` assignment index.
+- Updated workflow API routes:
+  - `GET /api/workflows` prefers canonical workflows with assignment metadata.
+  - `GET /api/sandboxes/{id}/workflows` lists assigned workflows for one sandbox.
+  - `POST /api/sandboxes/{id}/workflows` creates canonical workflows, assigns them to the sandbox, and skips duplicate/near-duplicate candidates.
+  - `POST /api/workflows/{id}/sandboxes` assigns a reusable workflow to one or more sandboxes.
+  - `DELETE /api/sandboxes/{id}/workflows/{workflowId}` removes a workflow from one sandbox without deleting the canonical workflow.
+- Added `web/src/lib/server/workflow-dedupe.ts`.
+  - Fingerprint-based duplicate detection.
+  - Heuristic near-duplicate detection.
+- Updated `web/src/components/workflows-workspace.tsx`.
+  - Workflows page behaves as a reusable workflow library.
+  - Workflows can be assigned to additional sandboxes.
+  - Optional focus input and focus quick chips added to generation.
+- Updated `web/src/components/sandbox-detail.tsx`.
+  - Sandbox detail now has a Workflows section.
+  - Users can generate workflows from inside the sandbox context.
+
+### Backend Repo Changes
+
+In `/Users/aryanjain/projects/Gauntlet`:
+
+- `gauntlet/workflows/api_models.py`
+- `gauntlet/workflows/schema.py`
+- `gauntlet/workflows/generate.py`
+- `gauntlet/workflows/llm_planner.py`
+- `gauntlet/workflows/select.py`
+
+The backend generator now accepts `focus` and `existing_workflows`, asks the LLM planner for focus alignment and novelty reasons, and rejects candidates similar to existing workflows before final selection.
+
+### Verification
+
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- Python AST syntax check on modified backend workflow modules: passed.
+
+### Rollout Notes
+
+- Apply `migrations/0007_reusable_workflows.sql` before expecting true many-to-many workflow reuse.
+- The Next API includes legacy fallbacks for the old `sandbox_workflows` table shape, but reusable assignment requires the migration.
+- Deploy the backend repo for LLM-level focus and novelty enforcement.

@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { getServerSupabase, isDevBypass } from "@/lib/server/supabase";
 import { generateDrafts } from "@/lib/server/generate";
-import { rowToWorkflow, WORKFLOW_COLUMNS, type WorkflowRow } from "@/lib/server/workflow-map";
+import {
+  LEGACY_WORKFLOW_COLUMNS,
+  rowToWorkflow,
+  WORKFLOW_COLUMNS,
+  type WorkflowRow,
+} from "@/lib/server/workflow-map";
+import { filterNovelDrafts, workflowFingerprint } from "@/lib/server/workflow-dedupe";
 import { mockWorkflows } from "@/lib/mock-data";
 import type { DocInput } from "@/lib/sandbox-api";
 
@@ -15,11 +21,22 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       source: "mock",
     });
   }
-  const { data, error } = await supabase
+  const current = await supabase
     .from("sandbox_workflows")
     .select(WORKFLOW_COLUMNS)
     .eq("sandbox_id", id)
     .order("created_at", { ascending: false });
+  let data = current.data as unknown as WorkflowRow[] | null;
+  let error = current.error;
+  if (error) {
+    const legacy = await supabase
+      .from("sandbox_workflows")
+      .select(LEGACY_WORKFLOW_COLUMNS)
+      .eq("sandbox_id", id)
+      .order("created_at", { ascending: false });
+    data = legacy.data as unknown as WorkflowRow[] | null;
+    error = legacy.error;
+  }
   if (error) {
     return NextResponse.json({ detail: error.message }, { status: 500 });
   }
@@ -33,6 +50,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { id } = await params;
   const body = (await request.json()) as {
     workflowName?: string;
+    focus?: string;
     docs?: DocInput[];
     services?: { name: string; version?: string | null }[];
     count?: number;
@@ -48,8 +66,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const services = body.services ?? [];
   const count = Math.min(Math.max(body.count ?? docs.length, 1), 12);
 
-  const drafts = await generateDrafts({ docs, services, count, workflowName: body.workflowName });
-
   const supabase = await getServerSupabase();
   if (!supabase) {
     if (!isDevBypass()) {
@@ -58,31 +74,143 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         { status: 401 },
       );
     }
+    const drafts = await generateDrafts({
+      docs,
+      services,
+      count,
+      workflowName: body.workflowName,
+      focus: body.focus,
+    });
     // Dev bypass only: return the drafts without persisting.
     return NextResponse.json({
       workflows: drafts.map((draft, index) => ({
         id: `wf_local_${Date.now()}_${index}`,
         sandboxId: id,
+        canonicalId: `wf_local_${Date.now()}_${index}`,
         name: draft.name,
         description: draft.description,
         difficulty: draft.difficulty,
         taskPrompt: draft.task_prompt,
         services: services.map((s) => s.name),
+        focus: body.focus?.trim() || null,
+        noveltyReason: "Dev bypass draft; persistence and duplicate checks were skipped.",
         createdAt: new Date().toISOString(),
       })),
       source: "dev-bypass",
     });
   }
 
+  const currentExisting = await supabase
+    .from("sandbox_workflows")
+    .select(WORKFLOW_COLUMNS)
+    .eq("sandbox_id", id)
+    .order("created_at", { ascending: false });
+  let existingRows = currentExisting.data as unknown as WorkflowRow[] | null;
+  let existingError = currentExisting.error;
+  if (existingError) {
+    const legacy = await supabase
+      .from("sandbox_workflows")
+      .select(LEGACY_WORKFLOW_COLUMNS)
+      .eq("sandbox_id", id)
+      .order("created_at", { ascending: false });
+    existingRows = legacy.data as unknown as WorkflowRow[] | null;
+    existingError = legacy.error;
+  }
+  if (existingError) {
+    return NextResponse.json({ detail: existingError.message }, { status: 500 });
+  }
+
+  const existing = (existingRows ?? []) as WorkflowRow[];
+  const drafts = await generateDrafts({
+    docs,
+    services,
+    count,
+    workflowName: body.workflowName,
+    focus: body.focus,
+    existingWorkflows: existing.map((row) => ({
+      name: (Array.isArray(row.workflows) ? row.workflows[0] : row.workflows)?.name ?? row.name,
+      description:
+        (Array.isArray(row.workflows) ? row.workflows[0] : row.workflows)?.description ?? row.description,
+      task_prompt:
+        (Array.isArray(row.workflows) ? row.workflows[0] : row.workflows)?.task_prompt ?? row.task_prompt,
+      draft: ((Array.isArray(row.workflows) ? row.workflows[0] : row.workflows)?.draft ?? row.draft ?? {}) as Record<string, unknown>,
+    })),
+  });
+  const { accepted, skipped } = filterNovelDrafts(drafts, existing);
+
+  if (accepted.length === 0) {
+    return NextResponse.json({
+      workflows: [],
+      skipped,
+      source: "supabase",
+      detail: "No novel workflows were generated for this sandbox.",
+    });
+  }
+
+  const canonicalRows = accepted.map((draft) => ({
+    source_sandbox_id: id,
+    name: draft.name,
+    description: draft.description,
+    difficulty: draft.difficulty,
+    task_prompt: draft.task_prompt,
+    draft: {
+      ...draft.draft,
+      focus: body.focus?.trim() || draft.draft.focus || null,
+    },
+    focus: body.focus?.trim() || null,
+    fingerprint: workflowFingerprint(draft),
+  }));
+
+  const { data: workflowRows, error: workflowError } = await supabase
+    .from("workflows")
+    .insert(canonicalRows)
+    .select("id, name, description, difficulty, task_prompt, draft");
+
+  if (!workflowError && workflowRows) {
+    const assignmentRows = workflowRows.map((workflow, index) => {
+      const draft = accepted[index];
+      return {
+        sandbox_id: id,
+        workflow_id: workflow.id,
+        name: draft.name,
+        description: draft.description,
+        difficulty: draft.difficulty,
+        task_prompt: draft.task_prompt,
+        draft: draft.draft,
+        assignment_metadata: {
+          source: "generated",
+          focus: body.focus?.trim() || null,
+        },
+      };
+    });
+    const { data, error } = await supabase
+      .from("sandbox_workflows")
+      .insert(assignmentRows)
+      .select(WORKFLOW_COLUMNS);
+    if (error || !data) {
+      return NextResponse.json({ detail: error?.message ?? "Could not assign workflows." }, { status: 500 });
+    }
+    return NextResponse.json({
+      workflows: (data as unknown as WorkflowRow[]).map(rowToWorkflow),
+      skipped,
+      source: "supabase",
+    });
+  }
+
+  // Compatibility path for environments that have not applied
+  // migrations/0007_reusable_workflows.sql yet.
   const { data, error } = await supabase
     .from("sandbox_workflows")
-    .insert(drafts.map((draft) => ({ ...draft, sandbox_id: id })))
+    .insert(accepted.map((draft) => ({ ...draft, sandbox_id: id })))
     .select(WORKFLOW_COLUMNS);
   if (error || !data) {
-    return NextResponse.json({ detail: error?.message ?? "Could not save workflows." }, { status: 500 });
+    return NextResponse.json({
+      detail: error?.message ?? workflowError?.message ?? "Could not save workflows.",
+    }, { status: 500 });
   }
   return NextResponse.json({
-    workflows: (data as WorkflowRow[]).map(rowToWorkflow),
+    workflows: (data as unknown as WorkflowRow[]).map(rowToWorkflow),
+    skipped,
     source: "supabase",
   });
 }
