@@ -48,7 +48,7 @@ import {
   type Workflow,
 } from "@/lib/sandbox-api";
 import { useSandboxStore } from "@/components/sandbox-store";
-import { GenerateWorkflowSheet } from "@/components/workflows-workspace";
+import { GenerateWorkflowSheet, WorkflowCard } from "@/components/workflows-workspace";
 import { twinIconMap, twinOptions, type Sandbox, type SandboxStatus, type TwinOption } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 
@@ -262,22 +262,14 @@ function SandboxWorkflowsCard({ sandbox }: { sandbox: Sandbox }) {
         ) : workflows.length > 0 ? (
           <div className="grid gap-2">
             {workflows.map((workflow) => (
-              <div key={workflow.id} className="rounded-lg border bg-card p-3">
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-sm font-medium">{workflow.name}</div>
-                  {workflow.difficulty && (
-                    <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px]">
-                      {workflow.difficulty}
-                    </Badge>
-                  )}
-                </div>
-                {workflow.description && (
-                  <p className="mt-1 text-sm text-muted-foreground">{workflow.description}</p>
-                )}
-                {workflow.focus && (
-                  <p className="mt-1 text-xs text-muted-foreground">Focus: {workflow.focus}</p>
-                )}
-              </div>
+              <WorkflowCard
+                key={workflow.id}
+                workflow={workflow}
+                sandbox={sandbox}
+                sandboxes={[sandbox]}
+                onChanged={load}
+                presentation="inline"
+              />
             ))}
           </div>
         ) : (

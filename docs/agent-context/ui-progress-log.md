@@ -409,8 +409,104 @@ The backend generator now accepts `focus` and `existing_workflows`, asks the LLM
 - `npm run build`: passed.
 - Python AST syntax check on modified backend workflow modules: passed.
 
+### 2026-07-03 Follow-Up: Migration-First Dedupe Tightening
+
+- Confirmed workflow generation runs from `POST /api/sandboxes/[id]/workflows` and reads the selected sandbox's currently assigned workflows before generation.
+- Increased generator candidate volume internally so duplicate filtering has room to still satisfy the requested workflow count.
+- Strengthened `web/src/lib/server/workflow-dedupe.ts` so near-duplicate detection compares new candidates against both existing sandbox workflows and already accepted candidates in the same generation batch.
+- Removed the legacy write fallback from sandbox workflow generation now that `migrations/0007_reusable_workflows.sql` has been applied.
+- Generation now returns `409` when every candidate is a duplicate instead of showing a successful "0 workflows generated" state.
+- Fixed workflow editing in the reusable workflow library to patch the canonical workflow id instead of the assignment/display id.
+
+Verification:
+
+- `npm run lint`: passed.
+- `npm run build`: passed.
+
 ### Rollout Notes
 
-- Apply `migrations/0007_reusable_workflows.sql` before expecting true many-to-many workflow reuse.
-- The Next API includes legacy fallbacks for the old `sandbox_workflows` table shape, but reusable assignment requires the migration.
+- `migrations/0007_reusable_workflows.sql` is expected to be applied before using workflow generation in this branch.
+- The Next API still keeps legacy read fallbacks for old assignment rows, but new generation writes only through canonical `workflows` plus `sandbox_workflows.workflow_id`.
 - Deploy the backend repo for LLM-level focus and novelty enforcement.
+
+## 2026-07-03: run-contract-v1 — Polling-Based Run Dispatch
+
+### What Changed
+
+**Next.js (`web/`):**
+
+- `web/src/app/api/sandboxes/[id]/runs/route.ts` — POST handler now does full dispatch after creating the Supabase run row: resolves GitHub installation ID, resolves HEAD SHA for the branch, dispatches to `POST /api/sandbox/trigger` on the Fly backend. Passes Supabase run ID as `workflow_id` for polling. Marks run as `error` immediately on dispatch failure.
+- `web/src/app/api/runs/[id]/status/route.ts` (new) — polling endpoint. Reads run from Supabase; if still active, calls `GET /api/sandbox/run-status?workflow_id={id}` on the backend. When runner reports terminal state, writes result to Supabase and returns updated run.
+- `web/src/app/api/sandboxes/branches/route.ts` — now passes `commit_sha` through from the backend branch response.
+- `web/src/components/run-detail.tsx` — polls `GET /api/runs/[id]/status` every 4 seconds while run is `queued` or `running`; stops on terminal state.
+- `web/src/components/run-status-badge.tsx` — added styles for `succeeded` and `canceled`.
+- `web/src/lib/sandbox-api.ts` — added `pollRunStatus()`, extended `RunStatus` type to include `succeeded`, `canceled`.
+
+**Backend (`/Users/aryanjain/projects/Gauntlet`, deployed to `gauntlet-api.fly.dev`):**
+
+- `gauntlet/server/routes/sandbox_runner.py` — `POST /api/sandbox/trigger` extended with workflow params; new `GET /api/sandbox/run-status?workflow_id={id}` endpoint.
+- `gauntlet/sandbox_runner/runner.py` — synced from Gauntlet_agent: full `Job` dataclass with `task_prompt`, `twins`, `modes`, `workflow_id`, `egress_default`, `callback_url`; store persistence; `_fire_callback`.
+- `gauntlet/sandbox_runner/store.py` (new) — added `get_run_by_workflow_id` for status polling.
+
+### Architecture
+
+No callback URL or shared secret required. Status flows via polling:
+
+```
+UI triggers run
+  → POST /api/sandboxes/[id]/runs
+  → creates Supabase row (status: queued)
+  → dispatch to Fly backend with workflow_id = Supabase run ID
+  → return
+
+run-detail.tsx polls every 4s
+  → GET /api/runs/[id]/status
+  → if queued/running: ask backend GET /api/sandbox/run-status?workflow_id={id}
+  → if backend says done: write result to Supabase, return final run
+  → UI updates; polling stops
+```
+
+### Verification
+
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- Python AST syntax check: passed.
+- `GET /api/sandbox/run-status?workflow_id=test-123` on live `gauntlet-api.fly.dev` returns `{"found":false}`.
+
+### Current State
+
+Run dispatch and polling are wired end-to-end. Execution requires MicroVM/S3 infrastructure and `DATABASE_URL` set in the Fly backend. Without those, runs dispatch but remain `queued` in the UI (status poller gets `found: false` from the backend).
+
+### Next Recommended Work
+
+1. Configure `DATABASE_URL` in the Fly backend env so runner persistence works and the status poller can find runs.
+2. Implement `egress-policy-v1`: per-run egress routing policy model.
+3. Consider backoff on the polling interval for long-running jobs (currently fixed 4s).
+
+## 2026-07-03: workflow-ux-v1 — Duplicate Feedback And Sandbox Controls
+
+### What Changed
+
+- `web/src/lib/sandbox-api.ts`
+  - `generateWorkflows()` now returns a structured `WorkflowGenerationResult` with `workflows`, `skipped`, `detail`, and `source`.
+  - `409` duplicate-only responses from generation are parsed as valid results so the UI can show duplicate details instead of a generic error.
+- `web/src/components/workflows-workspace.tsx`
+  - Generation sheet now shows created count, partial-generation state, duplicate count, and skipped workflow names/reasons.
+  - Successful generation no longer silently hides duplicate filtering.
+  - `WorkflowCard` is exported and supports `card` or `inline` presentation.
+- `web/src/components/sandbox-detail.tsx`
+  - Sandbox workflow rows now use the full workflow controls: edit, assign, remove, delete, and run.
+  - Sandbox detail uses the inline workflow card presentation to avoid nested cards.
+
+### Verification
+
+- `npm run lint`: passed.
+- `npm run build`: passed.
+- Active dev server smoke checks:
+  - `curl -I http://localhost:3000/sandboxes`: `200 OK`.
+  - `curl -I http://localhost:3000/workflows`: `200 OK`.
+
+### Remaining External Work
+
+- Confirm the backend deployment includes the LLM-level `focus` and `existing_workflows` generation changes from `/Users/aryanjain/projects/Gauntlet`.
+- Confirm run execution infrastructure is fully configured so workflow runs move past queued/running in production.

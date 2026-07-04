@@ -69,6 +69,7 @@ export function SandboxesWorkspace() {
   React.useEffect(() => {
     const github = searchParams.get("github");
     const githubError = searchParams.get("github_error");
+    const githubErrorDetail = searchParams.get("github_error_detail");
     if (!github && !githubError) return;
 
     if (github === "connected") {
@@ -85,7 +86,7 @@ export function SandboxesWorkspace() {
       });
     } else if (githubError) {
       toast.error("GitHub connection failed", {
-        description: "Could not link the GitHub App installation. Try again.",
+        description: githubErrorDetail || "Could not link the GitHub App installation. Try again.",
       });
     }
 

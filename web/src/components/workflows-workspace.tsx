@@ -46,6 +46,7 @@ import {
   updateWorkflow,
   type DocInput,
   type Workflow,
+  type WorkflowGenerationResult,
 } from "@/lib/sandbox-api";
 import type { Sandbox } from "@/lib/mock-data";
 
@@ -133,16 +134,18 @@ export function WorkflowsWorkspace() {
   );
 }
 
-function WorkflowCard({
+export function WorkflowCard({
   workflow,
   sandbox,
   sandboxes,
   onChanged,
+  presentation = "card",
 }: {
   workflow: Workflow;
   sandbox: Sandbox | null;
   sandboxes: Sandbox[];
   onChanged: () => void | Promise<void>;
+  presentation?: "card" | "inline";
 }) {
   const router = useRouter();
   const [running, setRunning] = React.useState(false);
@@ -180,9 +183,8 @@ function WorkflowCard({
     }
   }
 
-  return (
-    <Card className="rounded-lg shadow-none">
-      <CardContent className="flex flex-col gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
+  const content = (
+    <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-foreground">{workflow.name}</span>
@@ -247,6 +249,17 @@ function WorkflowCard({
             Run
           </Button>
         </div>
+      </div>
+  );
+
+  if (presentation === "inline") {
+    return <div className="rounded-lg border bg-card">{content}</div>;
+  }
+
+  return (
+    <Card className="rounded-lg shadow-none">
+      <CardContent className="p-0">
+        {content}
       </CardContent>
     </Card>
   );
@@ -369,7 +382,7 @@ function EditWorkflowSheet({
     setSaving(true);
     setError(null);
     try {
-      await updateWorkflow(workflow.id, {
+      await updateWorkflow(workflow.canonicalId ?? workflow.id, {
         name: cleanName,
         description,
         difficulty,
@@ -481,6 +494,7 @@ export function GenerateWorkflowSheet({
   const [count, setCount] = React.useState(3);
   const [generating, setGenerating] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [lastResult, setLastResult] = React.useState<WorkflowGenerationResult | null>(null);
 
   React.useEffect(() => {
     if (!open || sandboxId || !sandboxes[0]) return;
@@ -506,8 +520,9 @@ export function GenerateWorkflowSheet({
     if (filled.length === 0) return setError("Add at least one doc with a title and text.");
     setGenerating(true);
     setError(null);
+    setLastResult(null);
     try {
-      const created = await generateWorkflows({
+      const result = await generateWorkflows({
         sandboxId,
         workflowName,
         focus,
@@ -515,11 +530,20 @@ export function GenerateWorkflowSheet({
         services,
         count,
       });
-      toast.success(`Generated ${created.length} workflow${created.length === 1 ? "" : "s"}`);
-      setOpen(false);
-      setWorkflowName("");
-      setFocus("");
-      setDocs([{ title: "", text: "" }]);
+      const createdCount = result.workflows.length;
+      const skippedCount = result.skipped.length;
+      setLastResult(result);
+      if (createdCount > 0) {
+        toast.success(
+          `Generated ${createdCount} workflow${createdCount === 1 ? "" : "s"}`,
+          skippedCount > 0
+            ? { description: `${skippedCount} duplicate candidate${skippedCount === 1 ? "" : "s"} filtered out.` }
+            : undefined,
+        );
+        setWorkflowName("");
+        setFocus("");
+        setDocs([{ title: "", text: "" }]);
+      }
       await onGenerated();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not generate workflows.");
@@ -551,6 +575,9 @@ export function GenerateWorkflowSheet({
             <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
               {error}
             </div>
+          )}
+          {lastResult && (
+            <GenerationResultPanel result={lastResult} requestedCount={count} />
           )}
 
           <div className="space-y-2">
@@ -696,6 +723,53 @@ export function GenerateWorkflowSheet({
         </SheetFooter>
       </SheetContent>
     </Sheet>
+  );
+}
+
+function GenerationResultPanel({
+  result,
+  requestedCount,
+}: {
+  result: WorkflowGenerationResult;
+  requestedCount: number;
+}) {
+  const createdCount = result.workflows.length;
+  const skippedCount = result.skipped.length;
+  const partial = createdCount > 0 && createdCount < requestedCount;
+  const tone = createdCount === 0 || partial ? "border-amber-200 bg-amber-50 text-amber-950" : "border-emerald-200 bg-emerald-50 text-emerald-950";
+
+  return (
+    <div className={`rounded-lg border px-3 py-3 text-sm ${tone}`}>
+      <div className="font-medium">
+        {createdCount === 0
+          ? "No novel workflows generated"
+          : partial
+            ? `Generated ${createdCount} of ${requestedCount} requested workflows`
+            : `Generated ${createdCount} workflow${createdCount === 1 ? "" : "s"}`}
+      </div>
+      {result.detail && <p className="mt-1 opacity-85">{result.detail}</p>}
+      {skippedCount > 0 && (
+        <div className="mt-3 space-y-2">
+          <div className="text-xs font-medium uppercase tracking-normal opacity-75">
+            Filtered duplicates
+          </div>
+          {result.skipped.slice(0, 4).map((item, index) => (
+            <div key={`${item.name}-${index}`} className="rounded-md bg-background/70 px-2 py-1.5">
+              <div className="font-medium">{item.name}</div>
+              <div className="mt-0.5 text-xs opacity-80">
+                {item.matchedWorkflowName ? `Similar to ${item.matchedWorkflowName}. ` : ""}
+                {item.reason}
+              </div>
+            </div>
+          ))}
+          {skippedCount > 4 && (
+            <div className="text-xs opacity-75">
+              {skippedCount - 4} more duplicate candidate{skippedCount - 4 === 1 ? "" : "s"} filtered.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

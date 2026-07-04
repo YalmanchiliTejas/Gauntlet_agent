@@ -121,10 +121,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const existing = (existingRows ?? []) as WorkflowRow[];
+  const candidateCount = Math.min(Math.max(count * 3, count + 6), 36);
   const drafts = await generateDrafts({
     docs,
     services,
-    count,
+    count: candidateCount,
     workflowName: body.workflowName,
     focus: body.focus,
     existingWorkflows: existing.map((row) => ({
@@ -136,7 +137,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       draft: ((Array.isArray(row.workflows) ? row.workflows[0] : row.workflows)?.draft ?? row.draft ?? {}) as Record<string, unknown>,
     })),
   });
-  const { accepted, skipped } = filterNovelDrafts(drafts, existing);
+  const novel = filterNovelDrafts(drafts, existing);
+  const accepted = novel.accepted.slice(0, count);
+  const skipped = novel.skipped;
 
   if (accepted.length === 0) {
     return NextResponse.json({
@@ -144,7 +147,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       skipped,
       source: "supabase",
       detail: "No novel workflows were generated for this sandbox.",
-    });
+    }, { status: 409 });
   }
 
   const canonicalRows = accepted.map((draft) => ({
@@ -165,52 +168,43 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     .from("workflows")
     .insert(canonicalRows)
     .select("id, name, description, difficulty, task_prompt, draft");
-
-  if (!workflowError && workflowRows) {
-    const assignmentRows = workflowRows.map((workflow, index) => {
-      const draft = accepted[index];
-      return {
-        sandbox_id: id,
-        workflow_id: workflow.id,
-        name: draft.name,
-        description: draft.description,
-        difficulty: draft.difficulty,
-        task_prompt: draft.task_prompt,
-        draft: draft.draft,
-        assignment_metadata: {
-          source: "generated",
-          focus: body.focus?.trim() || null,
-        },
-      };
-    });
-    const { data, error } = await supabase
-      .from("sandbox_workflows")
-      .insert(assignmentRows)
-      .select(WORKFLOW_COLUMNS);
-    if (error || !data) {
-      return NextResponse.json({ detail: error?.message ?? "Could not assign workflows." }, { status: 500 });
-    }
-    return NextResponse.json({
-      workflows: (data as unknown as WorkflowRow[]).map(rowToWorkflow),
-      skipped,
-      source: "supabase",
-    });
+  if (workflowError || !workflowRows) {
+    return NextResponse.json(
+      { detail: workflowError?.message ?? "Could not save generated workflows." },
+      { status: 500 },
+    );
   }
 
-  // Compatibility path for environments that have not applied
-  // migrations/0007_reusable_workflows.sql yet.
+  const assignmentRows = workflowRows.map((workflow, index) => {
+    const draft = accepted[index];
+    return {
+      sandbox_id: id,
+      workflow_id: workflow.id,
+      name: draft.name,
+      description: draft.description,
+      difficulty: draft.difficulty,
+      task_prompt: draft.task_prompt,
+      draft: draft.draft,
+      assignment_metadata: {
+        source: "generated",
+        focus: body.focus?.trim() || null,
+      },
+    };
+  });
   const { data, error } = await supabase
     .from("sandbox_workflows")
-    .insert(accepted.map((draft) => ({ ...draft, sandbox_id: id })))
+    .insert(assignmentRows)
     .select(WORKFLOW_COLUMNS);
   if (error || !data) {
-    return NextResponse.json({
-      detail: error?.message ?? workflowError?.message ?? "Could not save workflows.",
-    }, { status: 500 });
+    return NextResponse.json({ detail: error?.message ?? "Could not assign workflows." }, { status: 500 });
   }
   return NextResponse.json({
     workflows: (data as unknown as WorkflowRow[]).map(rowToWorkflow),
     skipped,
+    detail:
+      accepted.length < count
+        ? `Generated ${accepted.length} novel workflow${accepted.length === 1 ? "" : "s"} after filtering duplicates.`
+        : undefined,
     source: "supabase",
   });
 }

@@ -60,6 +60,20 @@ export type Workflow = {
   createdAt: string;
 };
 
+export type SkippedWorkflow = {
+  name: string;
+  matchedWorkflowId?: string;
+  matchedWorkflowName?: string;
+  reason: string;
+};
+
+export type WorkflowGenerationResult = {
+  workflows: Workflow[];
+  skipped: SkippedWorkflow[];
+  detail?: string;
+  source?: string;
+};
+
 export type TraceStep = Record<string, unknown>;
 export type RunStatus = "queued" | "running" | "succeeded" | "passed" | "failed" | "canceled" | "error";
 
@@ -152,12 +166,24 @@ export async function generateWorkflows(input: {
   docs: DocInput[];
   services: { name: string; version?: string | null }[];
   count: number;
-}): Promise<Workflow[]> {
-  const payload = await fetchJson<{ workflows: Workflow[] }>(
-    `/api/sandboxes/${encodeURIComponent(input.sandboxId)}/workflows`,
-    { method: "POST", body: JSON.stringify(input) },
-  );
-  return payload.workflows;
+}): Promise<WorkflowGenerationResult> {
+  const response = await fetch(`/api/sandboxes/${encodeURIComponent(input.sandboxId)}/workflows`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const payload = (await response.json().catch(() => ({}))) as Partial<WorkflowGenerationResult> & {
+    detail?: string;
+  };
+  if (!response.ok && response.status !== 409) {
+    throw new Error(payload.detail || `${response.status} ${response.statusText}`);
+  }
+  return {
+    workflows: payload.workflows ?? [],
+    skipped: payload.skipped ?? [],
+    detail: payload.detail,
+    source: payload.source,
+  };
 }
 
 export async function assignWorkflowToSandboxes(
