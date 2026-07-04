@@ -1,22 +1,41 @@
 "use client";
 
 import * as React from "react";
-import { AlertCircle, CheckCircle2, GitFork, KeyRound, RefreshCw, Settings, Unplug } from "lucide-react";
+import Link from "next/link";
+import {
+  AlertCircle,
+  Boxes,
+  CheckCircle2,
+  Database,
+  GitFork,
+  KeyRound,
+  LogOut,
+  Mail,
+  RefreshCw,
+  User,
+} from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { listSandboxOptions, requiredGithubUiEndpoints, type SandboxOptionData } from "@/lib/sandbox-api";
+import {
+  listSandboxOptions,
+  listSandboxes,
+  signOut,
+  type SandboxOptionData,
+} from "@/lib/sandbox-api";
 
 type SessionState = {
   authenticated?: boolean;
-  source?: string;
+  userId?: string | null;
+  userEmail?: string | null;
 };
 
 export function SettingsWorkspace() {
   const [options, setOptions] = React.useState<SandboxOptionData | null>(null);
   const [session, setSession] = React.useState<SessionState | null>(null);
+  const [sandboxCount, setSandboxCount] = React.useState(0);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
@@ -24,12 +43,14 @@ export function SettingsWorkspace() {
     setLoading(true);
     setError(null);
     try {
-      const [optionPayload, sessionPayload] = await Promise.all([
+      const [optionPayload, sessionPayload, sandboxes] = await Promise.all([
         listSandboxOptions(),
         fetch("/api/session/state", { cache: "no-store" }).then((response) => response.json()),
+        listSandboxes().catch(() => []),
       ]);
       setOptions(optionPayload);
       setSession(sessionPayload);
+      setSandboxCount(sandboxes.length);
     } catch {
       setError("Could not load settings.");
     } finally {
@@ -44,13 +65,18 @@ export function SettingsWorkspace() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  const clearSession = React.useCallback(async () => {
+    await signOut();
+    window.location.assign("/login");
+  }, []);
+
   return (
     <AppShell>
       <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal text-foreground">Settings</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connection status, available twins, and backend endpoints used by this UI.
+            Manage your account, connected repositories, and sandbox defaults.
           </p>
         </div>
 
@@ -69,61 +95,92 @@ export function SettingsWorkspace() {
           <SettingsSkeleton />
         ) : (
           <>
-            <div className="grid gap-3 md:grid-cols-2">
-              <StatusCard
-                title="Session"
-                icon={KeyRound}
-                ok={!!session?.authenticated}
-                label={session?.authenticated ? "Authenticated" : "Signed out"}
-                detail={session?.source ? `Source: ${session.source}` : "Used for Supabase-backed persistence."}
-              />
+            <Card className="rounded-lg shadow-none">
+              <CardHeader className="border-b">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <User className="size-4 text-primary" />
+                  Account
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 p-4 md:grid-cols-[1fr_auto] md:items-center">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2 text-sm font-medium">
+                    <Mail className="size-4 text-muted-foreground" />
+                    {session?.userEmail ?? "No email available"}
+                  </div>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="secondary"
+                      className="h-5 rounded-md bg-emerald-50 px-1.5 text-[11px] text-emerald-700"
+                    >
+                      {session?.authenticated ? "Signed in" : "Signed out"}
+                    </Badge>
+                    {session?.userId && (
+                      <span className="text-xs text-muted-foreground">User ID {session.userId}</span>
+                    )}
+                  </div>
+                </div>
+                <Button variant="outline" onClick={() => void clearSession()}>
+                  <LogOut />
+                  Sign out
+                </Button>
+              </CardContent>
+            </Card>
+
+            <div className="grid gap-3 md:grid-cols-3">
               <StatusCard
                 title="GitHub"
                 icon={GitFork}
                 ok={!!options?.connection.connected}
                 label={options?.connection.connected ? "Connected" : "Not connected"}
                 detail={options?.connection.message ?? "Load settings to inspect GitHub status."}
+                action={
+                  !options?.connection.connected && options?.connection.installUrl ? (
+                    <Button size="sm" render={<a href={options.connection.installUrl} />}>
+                      <GitFork />
+                      Connect
+                    </Button>
+                  ) : undefined
+                }
+              />
+              <StatusCard
+                title="Sandboxes"
+                icon={Boxes}
+                ok={sandboxCount > 0}
+                label={`${sandboxCount} active`}
+                detail="Environments connected to your repositories."
+                action={
+                  <Button size="sm" variant="outline" render={<Link href="/sandboxes" />}>
+                    Manage
+                  </Button>
+                }
+              />
+              <StatusCard
+                title="Seed Data"
+                icon={Database}
+                ok={sandboxCount > 0}
+                label="Per sandbox"
+                detail="Generate and edit seeded Gmail, Slack, Stripe, and other twin data from each sandbox."
+                action={
+                  <Button size="sm" variant="outline" render={<Link href="/sandboxes" />}>
+                    Open
+                  </Button>
+                }
               />
             </div>
 
             <Card className="rounded-lg shadow-none">
               <CardHeader className="border-b">
                 <CardTitle className="flex items-center gap-2 text-base">
-                  <Settings className="size-4 text-primary" />
-                  Available twins
+                  <KeyRound className="size-4 text-primary" />
+                  Preferences
                 </CardTitle>
               </CardHeader>
-              <CardContent className="grid gap-2 p-4 sm:grid-cols-2">
-                {(options?.twins ?? []).map((twin) => (
-                  <div key={twin.id} className="rounded-lg border bg-card p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <span className={`size-2 rounded-full ${twin.tone}`} />
-                        {twin.name}
-                      </div>
-                      <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px]">
-                        {twin.versions[twin.versions.length - 1] ?? "none"}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{twin.description}</p>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="rounded-lg shadow-none">
-              <CardHeader className="border-b">
-                <CardTitle className="flex items-center gap-2 text-base">
-                  <Unplug className="size-4 text-primary" />
-                  Required UI endpoints
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="grid gap-2 p-4 sm:grid-cols-2">
-                {requiredGithubUiEndpoints.map((endpoint) => (
-                  <code key={endpoint} className="rounded-md border bg-muted px-2 py-1.5 text-xs">
-                    {endpoint}
-                  </code>
-                ))}
+              <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
+                <PreferenceRow label="Default scenario profile" value="Baseline seed" />
+                <PreferenceRow label="Run state snapshots" value="Enabled when migrations are applied" />
+                <PreferenceRow label="Workflow grouping" value="Repository" />
+                <PreferenceRow label="Sidebar state" value="Saved in this browser" />
               </CardContent>
             </Card>
           </>
@@ -139,29 +196,47 @@ function StatusCard({
   ok,
   label,
   detail,
+  action,
 }: {
   title: string;
   icon: React.ComponentType<{ className?: string }>;
   ok: boolean;
   label: string;
   detail: string;
+  action?: React.ReactNode;
 }) {
   return (
     <Card className="rounded-lg shadow-none">
-      <CardContent className="flex items-start justify-between gap-4 p-4">
+      <CardContent className="flex min-h-[142px] flex-col justify-between gap-4 p-4">
         <div className="min-w-0">
-          <div className="text-sm text-muted-foreground">{title}</div>
-          <div className="mt-1 flex items-center gap-2 text-base font-semibold">
-            {ok ? <CheckCircle2 className="size-4 text-emerald-600" /> : <AlertCircle className="size-4 text-amber-600" />}
-            {label}
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm text-muted-foreground">{title}</div>
+            <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
+              <Icon className="size-4" />
+            </div>
+          </div>
+          <div className="mt-2 flex items-center gap-2 text-base font-semibold">
+            {ok ? (
+              <CheckCircle2 className="size-4 text-emerald-600" />
+            ) : (
+              <AlertCircle className="size-4 text-amber-600" />
+            )}
+            <span>{label}</span>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
         </div>
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-accent text-primary">
-          <Icon className="size-4" />
-        </div>
+        {action && <div>{action}</div>}
       </CardContent>
     </Card>
+  );
+}
+
+function PreferenceRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="text-sm font-medium">{label}</div>
+      <div className="mt-1 text-sm text-muted-foreground">{value}</div>
+    </div>
   );
 }
 

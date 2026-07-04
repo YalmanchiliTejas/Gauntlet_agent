@@ -194,7 +194,9 @@ function SandboxBody({ sandbox: initialSandbox }: { sandbox: Sandbox }) {
         </CardContent>
       </Card>
 
-      <SimulationDataCard sandbox={sandbox} />
+      <div id="simulation-data" className="scroll-mt-6">
+        <SimulationDataCard sandbox={sandbox} />
+      </div>
     </>
   );
 }

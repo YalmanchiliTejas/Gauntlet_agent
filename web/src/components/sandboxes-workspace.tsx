@@ -11,6 +11,7 @@ import {
   Boxes,
   CheckCircle2,
   Clock3,
+  Database,
   GitBranch,
   GitFork,
   MoreHorizontal,
@@ -181,6 +182,27 @@ export function SandboxesWorkspace() {
                 );
               })}
         </div>
+
+        {items.length > 0 && !loading && (
+          <Card className="rounded-lg shadow-none">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <Database className="size-4 text-primary" />
+                  Data generation and seeding
+                </div>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Each sandbox has an active scenario seed overlay for Gmail messages, Slack channels,
+                  Stripe customers, and other twin records.
+                </p>
+              </div>
+              <Button variant="outline" render={<Link href={`/sandboxes/${items[0].id}#simulation-data`} />}>
+                <Database />
+                Open seed data
+              </Button>
+            </CardContent>
+          </Card>
+        )}
 
         {error ? (
           <ErrorState message={error} onRetry={loadSandboxes} />
