@@ -1,0 +1,5 @@
+{
+  "run": "python agent.py",
+  "twins": { "slack": "v1" },
+  "modes": { "slack": "twin" }
+}
