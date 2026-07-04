@@ -2,6 +2,7 @@ import {
   type Sandbox,
   type TwinOption,
 } from "@/lib/mock-data";
+import { getSupabaseClient } from "@/lib/supabase";
 
 export type Repository = {
   id: string;
@@ -378,11 +379,25 @@ export const requiredGithubUiEndpoints = [
   "GET /api/sandboxes",
 ];
 
+// The browser holds the live, auto-refreshed Supabase session; the server-side
+// `gauntlet_api_token` cookie is only a login-time snapshot that goes stale after the
+// token rotates (~1h). Attach the current access token to every call so `backendFetch`
+// forwards a fresh bearer instead of the stale cookie — otherwise the backend 401s.
+let _authClient: ReturnType<typeof getSupabaseClient> = null;
+async function authHeader(): Promise<Record<string, string>> {
+  if (!_authClient) _authClient = getSupabaseClient();
+  if (!_authClient) return {};
+  const { data } = await _authClient.auth.getSession();
+  const token = data.session?.access_token;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
+      ...(await authHeader()),
       ...(init?.headers || {}),
     },
   });
