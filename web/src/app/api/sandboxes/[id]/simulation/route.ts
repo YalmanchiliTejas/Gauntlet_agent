@@ -4,6 +4,7 @@ import path from "node:path";
 import { NextRequest, NextResponse } from "next/server";
 
 import { initialSandboxes, twinOptions } from "@/lib/mock-data";
+import { backendFetch } from "@/lib/server/gauntlet-backend";
 import { rowToSandbox, SANDBOX_COLUMNS, type SandboxRow } from "@/lib/server/sandbox-map";
 import { getServerSupabase } from "@/lib/server/supabase";
 
@@ -59,8 +60,9 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const body = (await request.json().catch(() => ({}))) as { profile?: Profile };
+  const body = (await request.json().catch(() => ({}))) as { profile?: Profile; description?: string };
   const profile: Profile = body.profile === "busy" || body.profile === "edge" ? body.profile : "baseline";
+  const description = body.description?.trim() || "";
   const sandbox = await loadSandbox(id);
 
   if (!sandbox) {
@@ -76,11 +78,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }),
     );
   const seeds = await Promise.all(
-    Object.entries(twinVersions).map(async ([service, version]) => ({
-      service,
-      version,
-      resources: expandSeed(await readSeed(service, version), profile, service),
-    })),
+    Object.entries(twinVersions).map(async ([service, version]) => {
+      // With a description, ask the LLM backend to generate seed records; fall back to
+      // the registry seed + profile expansion when there's no description or it fails.
+      const llmResources = description
+        ? await generateSeedFromDescription(service, version, description, request)
+        : null;
+      return {
+        service,
+        version,
+        resources: llmResources ?? expandSeed(await readSeed(service, version), profile, service),
+      };
+    }),
   );
 
   return NextResponse.json({
@@ -151,6 +160,34 @@ async function loadSandbox(id: string) {
     .maybeSingle();
   if (error || !data) return null;
   return rowToSandbox(data as SandboxRow);
+}
+
+// Ask the Gauntlet backend to LLM-generate seed records from a text description.
+// Uses the authenticated backend session (Bearer). Returns null on any failure so the
+// caller falls back to the registry seed.
+async function generateSeedFromDescription(
+  service: string,
+  version: string,
+  description: string,
+  request: NextRequest,
+): Promise<SeedRecords | null> {
+  try {
+    const data = await backendFetch<{ resources?: SeedRecords }>(
+      "/api/twins/seed",
+      { method: "POST", body: JSON.stringify({ service, version, description }) },
+      request,
+    );
+    const resources = data.resources;
+    if (!resources || typeof resources !== "object") return null;
+    return Object.fromEntries(
+      Object.entries(resources).map(([resource, rows]) => [
+        resource,
+        Array.isArray(rows) ? rows.filter(isRecord) : [],
+      ]),
+    );
+  } catch {
+    return null;
+  }
 }
 
 async function readSeed(service: string, version: string): Promise<SeedRecords> {

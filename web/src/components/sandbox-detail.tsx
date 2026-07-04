@@ -599,6 +599,7 @@ function TwinEditor({
 function SimulationDataCard({ sandbox }: { sandbox: Sandbox }) {
   const [profile, setProfile] = React.useState<SimulationProfile>("baseline");
   const [scenarioName, setScenarioName] = React.useState("Default scenario");
+  const [dataDescription, setDataDescription] = React.useState("");
   const [scenarioText, setScenarioText] = React.useState("");
   const [loading, setLoading] = React.useState(true);
   const [generating, setGenerating] = React.useState(false);
@@ -632,10 +633,10 @@ function SimulationDataCard({ sandbox }: { sandbox: Sandbox }) {
     setGenerating(true);
     setError(null);
     try {
-      const scenario = await generateSimulationScenario(sandbox.id, profile);
+      const scenario = await generateSimulationScenario(sandbox.id, profile, dataDescription.trim());
       scenario.name = scenarioName.trim() || scenario.name;
       setScenarioText(JSON.stringify(scenario, null, 2));
-      toast.success("Simulation data generated");
+      toast.success(dataDescription.trim() ? "Simulation data generated from description" : "Simulation data generated");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not generate simulation data.");
     } finally {
@@ -708,6 +709,20 @@ function SimulationDataCard({ sandbox }: { sandbox: Sandbox }) {
           </div>
         )}
         {loading && <Skeleton className="h-20 w-full rounded-lg" />}
+        <div className="space-y-2">
+          <Label htmlFor="simulation-description">Describe the data you want (optional)</Label>
+          <textarea
+            id="simulation-description"
+            className="min-h-[72px] w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            value={dataDescription}
+            onChange={(event) => setDataDescription(event.target.value)}
+            placeholder="e.g. a #support channel with 5 customer messages about password resets and billing, plus a #general channel with some chatter"
+          />
+          <p className="text-xs text-muted-foreground">
+            With a description, Generate uses an LLM to seed the twins. Leave blank to use the
+            registry seed and the profile below.
+          </p>
+        </div>
         <div className="grid gap-3 sm:grid-cols-[minmax(220px,1fr)_220px] sm:items-end">
           <div className="space-y-2">
             <Label htmlFor="simulation-name">Scenario name</Label>

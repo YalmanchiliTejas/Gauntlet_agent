@@ -260,11 +260,12 @@ export async function updateSandboxTwins(id: string, twins: Record<string, strin
 export async function generateSimulationScenario(
   sandboxId: string,
   profile: SimulationProfile,
+  description?: string,
 ): Promise<SimulationScenario> {
   return (
     await fetchJson<{ scenario: SimulationScenario }>(
       `/api/sandboxes/${encodeURIComponent(sandboxId)}/simulation`,
-      { method: "POST", body: JSON.stringify({ profile }) },
+      { method: "POST", body: JSON.stringify({ profile, description }) },
     )
   ).scenario;
 }
