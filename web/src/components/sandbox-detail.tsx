@@ -10,28 +10,36 @@ import {
   Boxes,
   Clock3,
   Database,
+  EyeOff,
+  KeyRound,
   Loader2,
   GitBranch,
   GitFork,
   RotateCcw,
   Save,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   generateSimulationScenario,
+  deleteSandboxEnvVar,
   getSimulationScenario,
   getSandbox,
+  listSandboxEnvVars,
   listSandboxOptions,
   saveSimulationScenario,
+  saveSandboxEnvVars,
   updateSandboxTwins,
+  type SandboxEnvVar,
   type SandboxOptionData,
   type SimulationProfile,
   type SimulationScenario,
@@ -194,10 +202,187 @@ function SandboxBody({ sandbox: initialSandbox }: { sandbox: Sandbox }) {
         </CardContent>
       </Card>
 
+      <EnvVarsCard sandbox={sandbox} />
+
       <div id="simulation-data" className="scroll-mt-6">
         <SimulationDataCard sandbox={sandbox} />
       </div>
     </>
+  );
+}
+
+type EnvDraft = {
+  key: string;
+  value: string;
+};
+
+function EnvVarsCard({ sandbox }: { sandbox: Sandbox }) {
+  const [envVars, setEnvVars] = React.useState<SandboxEnvVar[]>([]);
+  const [drafts, setDrafts] = React.useState<EnvDraft[]>([{ key: "", value: "" }]);
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [deletingKey, setDeletingKey] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setEnvVars(await listSandboxEnvVars(sandbox.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not load env vars.");
+    } finally {
+      setLoading(false);
+    }
+  }, [sandbox.id]);
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  function setDraft(index: number, patch: Partial<EnvDraft>) {
+    setDrafts((current) => current.map((draft, i) => (i === index ? { ...draft, ...patch } : draft)));
+  }
+
+  async function save() {
+    const filled = drafts.filter((draft) => draft.key.trim() || draft.value);
+    if (filled.length === 0) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const saved = await saveSandboxEnvVars(sandbox.id, filled);
+      setEnvVars((current) => {
+        const map = new Map(current.map((item) => [item.key, item]));
+        for (const item of saved) map.set(item.key, item);
+        return Array.from(map.values()).sort((a, b) => a.key.localeCompare(b.key));
+      });
+      setDrafts([{ key: "", value: "" }]);
+      toast.success("Environment variables saved");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save env vars.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function remove(key: string) {
+    setDeletingKey(key);
+    setError(null);
+    try {
+      await deleteSandboxEnvVar(sandbox.id, key);
+      setEnvVars((current) => current.filter((item) => item.key !== key));
+      toast.success(`${key} removed`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not delete env var.");
+    } finally {
+      setDeletingKey(null);
+    }
+  }
+
+  return (
+    <Card className="rounded-lg shadow-none">
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <KeyRound className="size-4 text-primary" />
+          Environment variables
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 p-4">
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+            {error}
+          </div>
+        )}
+        <div className="space-y-2">
+          <div className="text-sm font-medium">Saved keys</div>
+          {loading ? (
+            <Skeleton className="h-16 w-full rounded-lg" />
+          ) : envVars.length > 0 ? (
+            <div className="divide-y rounded-lg border">
+              {envVars.map((item) => (
+                <div key={item.key} className="flex items-center justify-between gap-3 p-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <EyeOff className="size-3.5 text-muted-foreground" />
+                      {item.key}
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      Value hidden after save · Updated {new Date(item.updatedAt).toLocaleString()}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => void remove(item.key)}
+                    disabled={deletingKey === item.key}
+                    aria-label={`Delete ${item.key}`}
+                  >
+                    {deletingKey === item.key ? <Loader2 className="animate-spin" /> : <Trash2 />}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
+              No environment variables saved for this sandbox.
+            </p>
+          )}
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <div className="text-sm font-medium">Add or replace variables</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Values are write-only in the UI. Re-enter a key to replace its stored value.
+            </p>
+          </div>
+          {drafts.map((draft, index) => (
+            <div key={index} className="grid gap-2 sm:grid-cols-[minmax(180px,1fr)_minmax(220px,1.2fr)_40px]">
+              <Input
+                placeholder="OPENAI_API_KEY"
+                value={draft.key}
+                onChange={(event) => setDraft(index, { key: event.target.value })}
+                autoCapitalize="none"
+                spellCheck={false}
+              />
+              <Input
+                type="password"
+                placeholder="Value"
+                value={draft.value}
+                onChange={(event) => setDraft(index, { value: event.target.value })}
+                autoComplete="new-password"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setDrafts((current) => current.filter((_, i) => i !== index))}
+                disabled={drafts.length === 1}
+                aria-label="Remove env var row"
+              >
+                <Trash2 />
+              </Button>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDrafts((current) => [...current, { key: "", value: "" }])}
+            >
+              Add variable
+            </Button>
+            <Button onClick={save} disabled={saving}>
+              {saving ? <Loader2 className="animate-spin" /> : <Save />}
+              Save variables
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

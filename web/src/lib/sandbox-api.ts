@@ -104,6 +104,11 @@ export type SimulationScenario = {
   seeds: SimulationSeed[];
 };
 
+export type SandboxEnvVar = {
+  key: string;
+  updatedAt: string;
+};
+
 export async function listWorkflows(): Promise<Workflow[]> {
   return (await fetchJson<{ workflows: Workflow[] }>("/api/workflows")).workflows;
 }
@@ -217,6 +222,31 @@ export async function saveSimulationScenario(
       { method: "PUT", body: JSON.stringify({ scenario }) },
     )
   ).scenario;
+}
+
+export async function listSandboxEnvVars(sandboxId: string): Promise<SandboxEnvVar[]> {
+  return (
+    await fetchJson<{ env: SandboxEnvVar[] }>(`/api/sandboxes/${encodeURIComponent(sandboxId)}/env`)
+  ).env;
+}
+
+export async function saveSandboxEnvVars(
+  sandboxId: string,
+  env: { key: string; value: string }[],
+): Promise<SandboxEnvVar[]> {
+  return (
+    await fetchJson<{ env: SandboxEnvVar[] }>(`/api/sandboxes/${encodeURIComponent(sandboxId)}/env`, {
+      method: "PUT",
+      body: JSON.stringify({ env }),
+    })
+  ).env;
+}
+
+export async function deleteSandboxEnvVar(sandboxId: string, key: string): Promise<void> {
+  await fetchJson(
+    `/api/sandboxes/${encodeURIComponent(sandboxId)}/env?key=${encodeURIComponent(key)}`,
+    { method: "DELETE" },
+  );
 }
 
 export async function listBranches(
