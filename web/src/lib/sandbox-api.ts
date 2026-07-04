@@ -24,9 +24,11 @@ export type GitHubConnection = {
 };
 
 export type CreateSandboxInput = {
+  name?: string;
   repo: string;
   branch: string;
-  twinIds: string[];
+  // service id -> selected spec version
+  twins: Record<string, string>;
 };
 
 export type SandboxOptionData = {
@@ -35,6 +37,134 @@ export type SandboxOptionData = {
   twins: TwinOption[];
 };
 
+// ---------- workflows + runs ----------
+
+export type DocInput = { title: string; text: string; url?: string };
+
+export type Workflow = {
+  id: string;
+  sandboxId: string;
+  name: string;
+  description: string | null;
+  difficulty: string | null;
+  taskPrompt: string | null;
+  services: string[];
+  createdAt: string;
+};
+
+export type TraceStep = Record<string, unknown>;
+export type RunStatus = "queued" | "running" | "passed" | "failed" | "error";
+
+export type ReviewSeverity = "low" | "med" | "high";
+// One judge finding, code-reviewer style: it tags specific trace steps.
+export type ReviewFinding = {
+  steps: number[]; // indices into trajectory this finding cites as evidence
+  axis: string; // efficiency | correctness | reliability | security | …
+  severity: ReviewSeverity;
+  title: string;
+  recommendation?: string;
+};
+export type RunReview = {
+  summary?: string;
+  reviewedAt?: string;
+  findings: ReviewFinding[];
+};
+
+export type Run = {
+  id: string;
+  sandboxId: string;
+  workflowId: string | null;
+  workflowName: string | null;
+  fixOf: string | null;
+  status: RunStatus;
+  trajectory: TraceStep[];
+  verdict: Record<string, unknown>;
+  review: RunReview;
+  error: string | null;
+  createdAt: string;
+  finishedAt: string | null;
+  scenarioId?: string | null;
+  initialState?: Record<string, unknown>;
+  finalState?: Record<string, unknown>;
+  stateDiff?: Record<string, unknown>;
+};
+
+export type SimulationProfile = "baseline" | "busy" | "edge";
+export type SimulationSeed = {
+  service: string;
+  version: string;
+  resources: Record<string, unknown[]>;
+};
+export type SimulationScenario = {
+  id?: string | null;
+  sandboxId: string;
+  name?: string;
+  profile: SimulationProfile;
+  generatedAt: string;
+  seeds: SimulationSeed[];
+};
+
+export async function listWorkflows(): Promise<Workflow[]> {
+  return (await fetchJson<{ workflows: Workflow[] }>("/api/workflows")).workflows;
+}
+
+export async function updateWorkflow(
+  id: string,
+  input: Pick<Workflow, "name" | "description" | "difficulty" | "taskPrompt" | "services">,
+): Promise<Workflow> {
+  return (
+    await fetchJson<{ workflow: Workflow }>(`/api/workflows/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    })
+  ).workflow;
+}
+
+export async function deleteWorkflow(id: string): Promise<void> {
+  await fetchJson(`/api/workflows/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
+export async function generateWorkflows(input: {
+  sandboxId: string;
+  workflowName?: string;
+  docs: DocInput[];
+  services: { name: string; version?: string | null }[];
+  count: number;
+}): Promise<Workflow[]> {
+  const payload = await fetchJson<{ workflows: Workflow[] }>(
+    `/api/sandboxes/${encodeURIComponent(input.sandboxId)}/workflows`,
+    { method: "POST", body: JSON.stringify(input) },
+  );
+  return payload.workflows;
+}
+
+export async function listRuns(): Promise<Run[]> {
+  return (await fetchJson<{ runs: Run[] }>("/api/runs")).runs;
+}
+
+export async function getRun(id: string): Promise<Run> {
+  return (await fetchJson<{ run: Run }>(`/api/runs/${encodeURIComponent(id)}`)).run;
+}
+
+export async function createRun(sandboxId: string, workflowId: string): Promise<Run> {
+  const payload = await fetchJson<{ run: Run }>(
+    `/api/sandboxes/${encodeURIComponent(sandboxId)}/runs`,
+    { method: "POST", body: JSON.stringify({ workflowId }) },
+  );
+  return payload.run;
+}
+
+export async function fixRun(id: string): Promise<Run> {
+  return (await fetchJson<{ run: Run }>(`/api/runs/${encodeURIComponent(id)}/fix`, { method: "POST" }))
+    .run;
+}
+
+export async function reviewRun(id: string): Promise<Run> {
+  return (
+    await fetchJson<{ run: Run }>(`/api/runs/${encodeURIComponent(id)}/review`, { method: "POST" })
+  ).run;
+}
+
 export async function listSandboxOptions(): Promise<SandboxOptionData> {
   return fetchJson<SandboxOptionData>("/api/sandboxes/options");
 }
@@ -42,6 +172,51 @@ export async function listSandboxOptions(): Promise<SandboxOptionData> {
 export async function listSandboxes(): Promise<Sandbox[]> {
   const payload = await fetchJson<{ sandboxes: Sandbox[] }>("/api/sandboxes");
   return payload.sandboxes;
+}
+
+export async function getSandbox(id: string): Promise<Sandbox> {
+  const payload = await fetchJson<{ sandbox: Sandbox }>(`/api/sandboxes/${encodeURIComponent(id)}`);
+  return payload.sandbox;
+}
+
+export async function updateSandboxTwins(id: string, twins: Record<string, string>): Promise<Sandbox> {
+  const payload = await fetchJson<{ sandbox: Sandbox }>(`/api/sandboxes/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ twins }),
+  });
+  return payload.sandbox;
+}
+
+export async function generateSimulationScenario(
+  sandboxId: string,
+  profile: SimulationProfile,
+): Promise<SimulationScenario> {
+  return (
+    await fetchJson<{ scenario: SimulationScenario }>(
+      `/api/sandboxes/${encodeURIComponent(sandboxId)}/simulation`,
+      { method: "POST", body: JSON.stringify({ profile }) },
+    )
+  ).scenario;
+}
+
+export async function getSimulationScenario(sandboxId: string): Promise<SimulationScenario | null> {
+  return (
+    await fetchJson<{ scenario: SimulationScenario | null }>(
+      `/api/sandboxes/${encodeURIComponent(sandboxId)}/simulation`,
+    )
+  ).scenario;
+}
+
+export async function saveSimulationScenario(
+  sandboxId: string,
+  scenario: SimulationScenario,
+): Promise<SimulationScenario> {
+  return (
+    await fetchJson<{ scenario: SimulationScenario }>(
+      `/api/sandboxes/${encodeURIComponent(sandboxId)}/simulation`,
+      { method: "PUT", body: JSON.stringify({ scenario }) },
+    )
+  ).scenario;
 }
 
 export async function listBranches(
@@ -57,11 +232,18 @@ export async function listBranches(
 }
 
 export async function createSandbox(input: CreateSandboxInput): Promise<Sandbox> {
-  const payload = await fetchJson<{ sandbox: Sandbox }>("/api/sandboxes", {
+  // Explicit payload so exactly these fields are JSON-encoded and sent.
+  const payload = {
+    name: input.name?.trim() || undefined,
+    repo: input.repo,
+    branch: input.branch,
+    twins: input.twins, // { [serviceId]: version }
+  };
+  const response = await fetchJson<{ sandbox: Sandbox }>("/api/sandboxes", {
     method: "POST",
-    body: JSON.stringify(input),
+    body: JSON.stringify(payload),
   });
-  return payload.sandbox;
+  return response.sandbox;
 }
 
 export async function linkGitHubInstallation(installationId: string): Promise<void> {

@@ -30,15 +30,39 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { listSandboxes, type SandboxOptionData } from "@/lib/sandbox-api";
 import { twinIconMap, type Sandbox, type SandboxStatus } from "@/lib/mock-data";
+import { useSandboxStore } from "@/components/sandbox-store";
 import { cn } from "@/lib/utils";
 
 export function SandboxesWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [sandboxes, setSandboxes] = React.useState<Sandbox[]>([]);
-  const [loading, setLoading] = React.useState(true);
+  // List lives in the store so it (and any created sandboxes) survives tab
+  // navigation. null until first seeded this session.
+  const { sandboxes, setSandboxes } = useSandboxStore();
+  const [loading, setLoading] = React.useState(sandboxes === null);
   const [error, setError] = React.useState<string | null>(null);
   const [optionData, setOptionData] = React.useState<SandboxOptionData | null>(null);
+  const [checkingAuth, setCheckingAuth] = React.useState(true);
+
+  React.useEffect(() => {
+    let alive = true;
+    fetch("/api/session/state", { cache: "no-store" })
+      .then((response) => response.json())
+      .then((payload) => {
+        if (!alive) return;
+        if (!payload.authenticated) {
+          router.replace("/login");
+          return;
+        }
+        setCheckingAuth(false);
+      })
+      .catch(() => {
+        if (alive) router.replace("/login");
+      });
+    return () => {
+      alive = false;
+    };
+  }, [router]);
 
   // Handle GitHub App install callback results.
   React.useEffect(() => {
@@ -78,29 +102,37 @@ export function SandboxesWorkspace() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setSandboxes]);
 
   React.useEffect(() => {
+    // Already seeded on an earlier tab visit — keep the store's list as-is.
+    if (sandboxes !== null) {
+      const timer = window.setTimeout(() => {
+        setLoading(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
     const timer = window.setTimeout(() => {
       void loadSandboxes();
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadSandboxes]);
+  }, [sandboxes, loadSandboxes]);
 
   function addSandbox(sandbox: Sandbox) {
-    setSandboxes((current) => [sandbox, ...current]);
+    setSandboxes((current) => [sandbox, ...(current ?? [])]);
   }
 
+  const items = sandboxes ?? [];
   const stats = [
-    { label: "Sandboxes", value: sandboxes.length, icon: Boxes },
+    { label: "Sandboxes", value: items.length, icon: Boxes },
     {
       label: "Ready",
-      value: sandboxes.filter((sandbox) => sandbox.status === "Ready").length,
+      value: items.filter((sandbox) => sandbox.status === "Ready").length,
       icon: CheckCircle2,
     },
     {
       label: "Running",
-      value: sandboxes.filter((sandbox) => sandbox.status === "Running").length,
+      value: items.filter((sandbox) => sandbox.status === "Running").length,
       icon: Activity,
     },
   ];
@@ -108,6 +140,10 @@ export function SandboxesWorkspace() {
   return (
     <AppShell>
       <main className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        {checkingAuth ? (
+          <SandboxListSkeleton />
+        ) : (
+          <>
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-semibold tracking-normal text-foreground">
@@ -150,14 +186,16 @@ export function SandboxesWorkspace() {
           <ErrorState message={error} onRetry={loadSandboxes} />
         ) : loading ? (
           <SandboxListSkeleton />
-        ) : sandboxes.length > 0 ? (
-          <SandboxList sandboxes={sandboxes} />
+        ) : items.length > 0 ? (
+          <SandboxList sandboxes={items} />
         ) : (
           <EmptySandboxes
             optionData={optionData}
             onOptionsLoaded={setOptionData}
             onCreate={addSandbox}
           />
+        )}
+          </>
         )}
       </main>
     </AppShell>

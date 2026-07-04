@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import {
   Boxes,
   GitBranch,
+  LogOut,
   PanelLeftClose,
   PanelLeftOpen,
   PlayCircle,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { signOut } from "@/lib/sandbox-api";
 import { cn } from "@/lib/utils";
 
 const navItems = [
@@ -32,6 +34,11 @@ type AppShellProps = {
 export function AppShell({ children }: AppShellProps) {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useLocalCollapsedState();
+
+  const clearSession = React.useCallback(async () => {
+    await signOut();
+    window.location.assign("/login");
+  }, []);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -80,6 +87,17 @@ export function AppShell({ children }: AppShellProps) {
         </nav>
 
         <div className="border-t border-sidebar-border p-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size={collapsed ? "icon" : "default"}
+            className={cn("mb-2 w-full", !collapsed && "justify-start")}
+            title="Clear session"
+            onClick={() => void clearSession()}
+          >
+            <LogOut />
+            {!collapsed && <span>Clear session</span>}
+          </Button>
           <Button
             type="button"
             variant="ghost"

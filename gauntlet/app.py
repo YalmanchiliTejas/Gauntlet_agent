@@ -157,6 +157,22 @@ from sandbox.orchestrator import DOMAINS  # services we ship a twin for
 _REGISTRY = pathlib.Path(__file__).resolve().parent.parent / "twins" / "registry"
 
 
+def _registry_versions(name: str) -> list[str]:
+    d = _REGISTRY / name
+    return sorted(p.name for p in d.iterdir() if p.is_dir()) if d.is_dir() else []
+
+
+@app.get("/twins")
+async def list_twins():
+    """Catalog of shipped twins and their available spec versions (latest last).
+    Drives the sandbox create UI so it shows exactly what's present on disk."""
+    return {"twins": [
+        {"id": name, "versions": vers}
+        for name in DOMAINS
+        if (vers := _registry_versions(name))
+    ]}
+
+
 def _resolve_twins(twins: dict | None) -> dict | None:
     """Keep only services with a shipped twin, filling a missing version from the
     registry (latest). None/empty passes through unchanged."""

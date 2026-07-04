@@ -25,6 +25,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getAuthCallbackUrl } from "@/lib/auth-redirect";
 import {
   createSandbox,
   listBranches,
@@ -34,8 +35,12 @@ import {
   type SandboxOptionData,
 } from "@/lib/sandbox-api";
 import { getSupabaseClient } from "@/lib/supabase";
-import type { Sandbox } from "@/lib/mock-data";
+import type { Sandbox, TwinOption } from "@/lib/mock-data";
+import { useSandboxStore } from "@/components/sandbox-store";
 import { cn } from "@/lib/utils";
+
+// Backend fills a missing version with the latest, i.e. versions[-1].
+const latestVersion = (twin: TwinOption) => twin.versions[twin.versions.length - 1] ?? "";
 
 // GitHub mark SVG (lucide-react does not include the GitHub brand icon).
 function GithubIcon({ className }: { className?: string }) {
@@ -63,15 +68,25 @@ export function CreateSandboxSheet({
   onCreate,
 }: CreateSandboxSheetProps) {
   const [open, setOpen] = React.useState(false);
-  const [repo, setRepo] = React.useState("");
-  const [branch, setBranch] = React.useState("main");
   const [branches, setBranches] = React.useState<Branch[]>([]);
-  const [selectedTwins, setSelectedTwins] = React.useState<string[]>([]);
-  const [repoQuery, setRepoQuery] = React.useState("");
   const [loadingOptions, setLoadingOptions] = React.useState(false);
   const [loadingBranches, setLoadingBranches] = React.useState(false);
   const [creating, setCreating] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+
+  // Form fields live in the shared store so they survive sidebar tab navigation.
+  const {
+    sandboxName,
+    setSandboxName,
+    repo,
+    setRepo,
+    branch,
+    setBranch,
+    selectedTwins,
+    setSelectedTwins,
+    repoQuery,
+    setRepoQuery,
+  } = useSandboxStore();
 
   // Derived connection state.
   const isConnected =
@@ -106,7 +121,9 @@ export function CreateSandboxSheet({
     setRepo((current) => current || firstRepo?.fullName || "");
     setBranch((current) => current || firstRepo?.defaultBranch || "main");
     setSelectedTwins((current) =>
-      current.length > 0 ? current : data.twins.slice(0, 2).map((twin) => twin.id),
+      Object.keys(current).length > 0
+        ? current
+        : Object.fromEntries(data.twins.slice(0, 2).map((twin) => [twin.id, latestVersion(twin)])),
     );
   }
 
@@ -148,10 +165,20 @@ export function CreateSandboxSheet({
   );
   const selectedRepo = repositories.find((item) => item.fullName === repo);
 
-  function toggleTwin(id: string, checked: boolean) {
-    setSelectedTwins((current) =>
-      checked ? [...new Set([...current, id])] : current.filter((item) => item !== id),
-    );
+  function toggleTwin(twin: TwinOption, checked: boolean) {
+    setSelectedTwins((current) => {
+      const next = { ...current };
+      if (checked) {
+        next[twin.id] = latestVersion(twin);
+      } else {
+        delete next[twin.id];
+      }
+      return next;
+    });
+  }
+
+  function setTwinVersion(id: string, version: string) {
+    setSelectedTwins((current) => ({ ...current, [id]: version }));
   }
 
   async function submit() {
@@ -162,14 +189,20 @@ export function CreateSandboxSheet({
     setCreating(true);
     setError(null);
     try {
-      const sandbox = await createSandbox({ repo, branch, twinIds: selectedTwins });
+      const sandbox = await createSandbox({ name: sandboxName, repo, branch, twins: selectedTwins });
       onCreate(sandbox);
+      // Fresh form for the next sandbox.
+      setSandboxName("");
+      setRepo("");
+      setBranch("main");
+      setSelectedTwins({});
+      setRepoQuery("");
       setOpen(false);
       toast.success("Sandbox created", {
         description: `${sandbox.repo}@${sandbox.branch} is ready for workflow generation.`,
       });
-    } catch {
-      setError("Could not create sandbox.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not create sandbox.");
     } finally {
       setCreating(false);
     }
@@ -196,6 +229,16 @@ export function CreateSandboxSheet({
             {error}
           </div>
         )}
+
+        <div className="space-y-2">
+          <Label htmlFor="sandbox-name">Sandbox name</Label>
+          <Input
+            id="sandbox-name"
+            placeholder="Support regression sandbox"
+            value={sandboxName}
+            onChange={(event) => setSandboxName(event.target.value)}
+          />
+        </div>
 
         <div className="space-y-2">
           <Label htmlFor="repo">GitHub repository</Label>
@@ -269,7 +312,8 @@ export function CreateSandboxSheet({
           </div>
           <div className="grid gap-2">
             {twins.map((twin) => {
-              const checked = selectedTwins.includes(twin.id);
+              const checked = twin.id in selectedTwins;
+              const version = selectedTwins[twin.id] ?? latestVersion(twin);
               return (
                 <label
                   key={twin.id}
@@ -280,16 +324,35 @@ export function CreateSandboxSheet({
                 >
                   <Checkbox
                     checked={checked}
-                    onCheckedChange={(next) => toggleTwin(twin.id, next)}
+                    onCheckedChange={(next) => toggleTwin(twin, next)}
                     className="mt-0.5"
                   />
                   <span className="min-w-0 flex-1">
                     <span className="flex items-center gap-2">
                       <span className={cn("size-2 rounded-full", twin.tone)} />
                       <span className="text-sm font-medium text-foreground">{twin.name}</span>
-                      <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px]">
-                        {twin.version}
-                      </Badge>
+                      {checked ? (
+                        <Select value={version} onValueChange={(v) => setTwinVersion(twin.id, String(v))}>
+                          <SelectTrigger
+                            aria-label={`${twin.name} version`}
+                            className="ml-auto h-6 gap-1 rounded-md px-1.5 text-[11px]"
+                            onClick={(e) => e.preventDefault()}
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent align="end">
+                            {twin.versions.map((v) => (
+                              <SelectItem key={v} value={v}>
+                                {v}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px]">
+                          {latestVersion(twin)}
+                        </Badge>
+                      )}
                     </span>
                     <span className="mt-1 block text-sm text-muted-foreground">
                       {twin.description}
@@ -309,8 +372,11 @@ export function CreateSandboxSheet({
           <div className="mt-2 text-sm text-muted-foreground">
             {repo || "No repository selected"} on{" "}
             <span className="font-medium text-foreground">{branch}</span> with{" "}
-            {selectedTwins.length} selected twin
-            {selectedTwins.length === 1 ? "" : "s"}.
+            {Object.keys(selectedTwins).length} selected twin
+            {Object.keys(selectedTwins).length === 1 ? "" : "s"}.
+            {sandboxName.trim() && (
+              <span className="ml-1 text-foreground">Named {sandboxName.trim()}.</span>
+            )}
             {selectedRepo && selectedRepo.defaultBranch === branch && (
               <span className="ml-1 text-foreground">Default branch.</span>
             )}
@@ -448,15 +514,24 @@ function SignInCard({ onSignedIn }: { onSignedIn: () => void }) {
   }
 
   async function handleGoogleSignIn() {
-    setGoogleLoading(true);
-    setError(null);
+      setGoogleLoading(true);
+      setError(null);
     try {
       if (!supabase) throw new Error("Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.");
-      const { error: sbError } = await supabase.auth.signInWithOAuth({
+      const redirectTo = getAuthCallbackUrl();
+      const { data, error: sbError } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo: `${window.location.origin}/auth/callback` },
+        options: {
+          redirectTo,
+          skipBrowserRedirect: true,
+          queryParams: { prompt: "select_account" },
+        },
       });
       if (sbError) throw new Error(sbError.message);
+      if (!data.url) throw new Error("Supabase did not return an OAuth URL.");
+      const url = new URL(data.url);
+      url.searchParams.set("redirect_to", redirectTo);
+      window.location.assign(url.toString());
       // Browser will navigate away to Google — loading state stays until redirect.
     } catch (err) {
       setError(err instanceof Error ? err.message : "Google sign-in failed.");

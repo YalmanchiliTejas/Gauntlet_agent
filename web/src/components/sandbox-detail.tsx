@@ -1,0 +1,538 @@
+"use client";
+
+import * as React from "react";
+import Link from "next/link";
+import { toast } from "sonner";
+import {
+  Activity,
+  AlertCircle,
+  ArrowLeft,
+  Boxes,
+  Clock3,
+  Database,
+  Loader2,
+  GitBranch,
+  GitFork,
+  RotateCcw,
+  Save,
+  RefreshCw,
+} from "lucide-react";
+import { AppShell } from "@/components/app-shell";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  generateSimulationScenario,
+  getSimulationScenario,
+  getSandbox,
+  listSandboxOptions,
+  saveSimulationScenario,
+  updateSandboxTwins,
+  type SandboxOptionData,
+  type SimulationProfile,
+  type SimulationScenario,
+} from "@/lib/sandbox-api";
+import { useSandboxStore } from "@/components/sandbox-store";
+import { twinIconMap, twinOptions, type Sandbox, type SandboxStatus, type TwinOption } from "@/lib/mock-data";
+import { cn } from "@/lib/utils";
+
+export function SandboxDetail({ id }: { id: string }) {
+  const [sandbox, setSandbox] = React.useState<Sandbox | null>(null);
+  const [loading, setLoading] = React.useState(true);
+  const [error, setError] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      setSandbox(await getSandbox(id));
+    } catch {
+      setError("This sandbox could not be found.");
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  React.useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [load]);
+
+  return (
+    <AppShell>
+      <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-4 py-6 sm:px-6 lg:px-8">
+        <Link
+          href="/sandboxes"
+          className="inline-flex w-fit items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <ArrowLeft className="size-4" />
+          Sandboxes
+        </Link>
+
+        {loading ? (
+          <DetailSkeleton />
+        ) : error || !sandbox ? (
+          <Card className="rounded-lg border-red-200 bg-red-50 shadow-none">
+            <CardContent className="flex min-h-[240px] flex-col items-center justify-center p-8 text-center">
+              <AlertCircle className="size-9 text-red-600" />
+              <h2 className="mt-4 text-lg font-semibold text-red-950">Sandbox unavailable</h2>
+              <p className="mt-2 text-sm text-red-800">{error ?? "Not found."}</p>
+              <Button className="mt-5" variant="outline" onClick={load}>
+                <RefreshCw />
+                Retry
+              </Button>
+            </CardContent>
+          </Card>
+        ) : (
+          <SandboxBody sandbox={sandbox} />
+        )}
+      </main>
+    </AppShell>
+  );
+}
+
+function SandboxBody({ sandbox: initialSandbox }: { sandbox: Sandbox }) {
+  const [sandbox, setSandbox] = React.useState(initialSandbox);
+  const [editing, setEditing] = React.useState(false);
+
+  // Prefer the {id: version} map (DB-backed) so we can show pinned versions;
+  // fall back to bare twin names for mock sandboxes.
+  const twins = sandbox.twinVersions
+    ? Object.entries(sandbox.twinVersions).map(([id, version]) => ({
+        name: twinOptions.find((twin) => twin.id === id)?.name ?? id,
+        version,
+      }))
+    : sandbox.twins.map((name) => ({ name, version: null as string | null }));
+
+  const stats = [
+    { label: "Workflows", value: String(sandbox.workflowCount), icon: Boxes },
+    { label: "Status", value: sandbox.status, icon: Activity },
+    { label: "Last run", value: sandbox.lastRun, icon: Clock3 },
+  ];
+
+  return (
+    <>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold tracking-normal text-foreground">
+              {sandbox.name}
+            </h1>
+            <StatusBadge status={sandbox.status} />
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5">
+              <GitFork className="size-3.5" />
+              {sandbox.repo}
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <GitBranch className="size-3.5" />
+              {sandbox.branch}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        {stats.map((stat) => {
+          const Icon = stat.icon;
+          return (
+            <Card key={stat.label} className="rounded-lg shadow-none">
+              <CardContent className="flex items-center justify-between p-4">
+                <div className="min-w-0">
+                  <div className="text-sm text-muted-foreground">{stat.label}</div>
+                  <div className="mt-1 truncate text-lg font-semibold">{stat.value}</div>
+                </div>
+                <div className="flex size-9 items-center justify-center rounded-lg bg-accent text-primary">
+                  <Icon className="size-4" />
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <Card className="rounded-lg shadow-none">
+        <CardHeader className="flex flex-row items-center justify-between border-b">
+          <CardTitle className="text-base">Twins</CardTitle>
+          <Button variant="outline" size="sm" onClick={() => setEditing((current) => !current)}>
+            {editing ? "Done" : "Edit twins"}
+          </Button>
+        </CardHeader>
+        <CardContent className="p-4">
+          {editing ? (
+            <TwinEditor sandbox={sandbox} onSaved={setSandbox} />
+          ) : twins.length > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {twins.map((twin) => {
+                const Icon =
+                  twinIconMap[twin.name as keyof typeof twinIconMap] ?? twinIconMap.default;
+                return (
+                  <Badge
+                    key={twin.name}
+                    variant="outline"
+                    className="h-8 gap-1.5 rounded-md bg-background px-2.5 font-normal"
+                  >
+                    <Icon className="size-3.5 text-muted-foreground" />
+                    {twin.name}
+                    {twin.version && (
+                      <span className="text-muted-foreground">· {twin.version}</span>
+                    )}
+                  </Badge>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No twins selected for this sandbox.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <SimulationDataCard sandbox={sandbox} />
+    </>
+  );
+}
+
+function latestVersion(twin: TwinOption) {
+  return twin.versions[twin.versions.length - 1] ?? "";
+}
+
+function TwinEditor({
+  sandbox,
+  onSaved,
+}: {
+  sandbox: Sandbox;
+  onSaved: (sandbox: Sandbox) => void;
+}) {
+  const { setSandboxes } = useSandboxStore();
+  const [optionData, setOptionData] = React.useState<SandboxOptionData | null>(null);
+  const [selected, setSelected] = React.useState<Record<string, string>>(sandbox.twinVersions ?? {});
+  const [loading, setLoading] = React.useState(true);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let alive = true;
+    listSandboxOptions()
+      .then((data) => {
+        if (alive) setOptionData(data);
+      })
+      .catch(() => {
+        if (alive) setError("Could not load available twins.");
+      })
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  function toggleTwin(twin: TwinOption, checked: boolean) {
+    setSelected((current) => {
+      const next = { ...current };
+      if (checked) {
+        next[twin.id] = current[twin.id] || latestVersion(twin);
+      } else {
+        delete next[twin.id];
+      }
+      return next;
+    });
+  }
+
+  function setTwinVersion(id: string, version: string) {
+    setSelected((current) => ({ ...current, [id]: version }));
+  }
+
+  async function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await updateSandboxTwins(sandbox.id, selected);
+      onSaved(updated);
+      setSandboxes((current) =>
+        current ? current.map((item) => (item.id === updated.id ? updated : item)) : current,
+      );
+      toast.success("Twins updated");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not update twins.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return <Skeleton className="h-48 w-full rounded-lg" />;
+  }
+
+  const twins = optionData?.twins ?? twinOptions;
+
+  return (
+    <div className="space-y-4">
+      {error && (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+          {error}
+        </div>
+      )}
+      <div className="grid gap-2 sm:grid-cols-2">
+        {twins.map((twin) => {
+          const checked = twin.id in selected;
+          const version = selected[twin.id] ?? latestVersion(twin);
+          return (
+            <label
+              key={twin.id}
+              className={cn(
+                "flex min-h-[92px] items-start gap-3 rounded-lg border bg-card p-3 transition-colors",
+                checked ? "border-primary/40 bg-accent/60" : "hover:bg-muted/70",
+              )}
+            >
+              <Checkbox
+                checked={checked}
+                onCheckedChange={(next) => toggleTwin(twin, next === true)}
+                className="mt-0.5"
+              />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-2">
+                  <span className={cn("size-2 rounded-full", twin.tone)} />
+                  <span className="text-sm font-medium">{twin.name}</span>
+                </span>
+                <span className="mt-1 block text-xs text-muted-foreground">{twin.description}</span>
+                {checked && (
+                  <span className="mt-3 block">
+                    <Label className="sr-only">{twin.name} version</Label>
+                    <Select value={version} onValueChange={(value) => setTwinVersion(twin.id, String(value))}>
+                      <SelectTrigger className="h-8 w-36">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent align="start">
+                        {twin.versions.map((item) => (
+                          <SelectItem key={item} value={item}>
+                            {item}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </span>
+                )}
+              </span>
+            </label>
+          );
+        })}
+      </div>
+      <div className="flex justify-end">
+        <Button onClick={save} disabled={saving}>
+          {saving ? <Loader2 className="animate-spin" /> : <Save />}
+          Save twins
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function SimulationDataCard({ sandbox }: { sandbox: Sandbox }) {
+  const [profile, setProfile] = React.useState<SimulationProfile>("baseline");
+  const [scenarioName, setScenarioName] = React.useState("Default scenario");
+  const [scenarioText, setScenarioText] = React.useState("");
+  const [loading, setLoading] = React.useState(true);
+  const [generating, setGenerating] = React.useState(false);
+  const [saving, setSaving] = React.useState(false);
+  const [error, setError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let alive = true;
+    const timer = window.setTimeout(() => {
+      getSimulationScenario(sandbox.id)
+        .then((scenario) => {
+          if (!alive || !scenario) return;
+          setScenarioName(scenario.name ?? "Default scenario");
+          setProfile(scenario.profile);
+          setScenarioText(JSON.stringify(scenario, null, 2));
+        })
+        .catch((err) => {
+          if (alive) setError(err instanceof Error ? err.message : "Could not load simulation data.");
+        })
+        .finally(() => {
+          if (alive) setLoading(false);
+        });
+    }, 0);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [sandbox.id]);
+
+  async function generate() {
+    setGenerating(true);
+    setError(null);
+    try {
+      const scenario = await generateSimulationScenario(sandbox.id, profile);
+      scenario.name = scenarioName.trim() || scenario.name;
+      setScenarioText(JSON.stringify(scenario, null, 2));
+      toast.success("Simulation data generated");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not generate simulation data.");
+    } finally {
+      setGenerating(false);
+    }
+  }
+
+  function save() {
+    setSaving(true);
+    setError(null);
+    try {
+      const parsed = JSON.parse(scenarioText) as SimulationScenario;
+      if (!Array.isArray(parsed.seeds)) {
+        throw new Error("Scenario JSON must include a seeds array.");
+      }
+      void saveSimulationScenario(sandbox.id, {
+        ...parsed,
+        name: scenarioName.trim() || parsed.name || "Default scenario",
+      })
+        .then((saved) => {
+          setScenarioName(saved.name ?? "Default scenario");
+          setProfile(saved.profile);
+          setScenarioText(JSON.stringify(saved, null, 2));
+          toast.success("Simulation data saved");
+        })
+        .catch((err) => {
+          setError(err instanceof Error ? err.message : "Could not save simulation data.");
+        })
+        .finally(() => setSaving(false));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Scenario JSON is invalid.");
+      setSaving(false);
+    }
+  }
+
+  function reset() {
+    setScenarioText("");
+    setError(null);
+  }
+
+  const seedCount = React.useMemo(() => {
+    try {
+      const parsed = JSON.parse(scenarioText) as SimulationScenario;
+      return parsed.seeds.reduce(
+        (total, seed) =>
+          total +
+          Object.values(seed.resources).reduce(
+            (resourceTotal, rows) => resourceTotal + (Array.isArray(rows) ? rows.length : 0),
+            0,
+          ),
+        0,
+      );
+    } catch {
+      return 0;
+    }
+  }, [scenarioText]);
+
+  return (
+    <Card className="rounded-lg shadow-none">
+      <CardHeader className="border-b">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Database className="size-4 text-primary" />
+          Simulation data
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-4 p-4">
+        {error && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900">
+            {error}
+          </div>
+        )}
+        {loading && <Skeleton className="h-20 w-full rounded-lg" />}
+        <div className="grid gap-3 sm:grid-cols-[minmax(220px,1fr)_220px] sm:items-end">
+          <div className="space-y-2">
+            <Label htmlFor="simulation-name">Scenario name</Label>
+            <input
+              id="simulation-name"
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={scenarioName}
+              onChange={(event) => setScenarioName(event.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="simulation-profile">Profile</Label>
+            <Select value={profile} onValueChange={(value) => setProfile(value as SimulationProfile)}>
+              <SelectTrigger id="simulation-profile" className="h-10">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start">
+                <SelectItem value="baseline">Baseline seed</SelectItem>
+                <SelectItem value="busy">Busy workspace</SelectItem>
+                <SelectItem value="edge">Edge cases</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex flex-wrap gap-2 sm:justify-end">
+            <Button variant="outline" onClick={reset} disabled={!scenarioText}>
+              <RotateCcw />
+              Reset
+            </Button>
+            <Button variant="outline" onClick={generate} disabled={generating}>
+              {generating ? <Loader2 className="animate-spin" /> : <Database />}
+              Generate
+            </Button>
+            <Button onClick={save} disabled={saving || !scenarioText}>
+              {saving ? <Loader2 className="animate-spin" /> : <Save />}
+              Save scenario
+            </Button>
+          </div>
+        </div>
+        <textarea
+          className="min-h-[260px] w-full rounded-md border bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          value={scenarioText}
+          onChange={(event) => setScenarioText(event.target.value)}
+          placeholder="Generate a scenario from the selected twins, then edit the seed records here."
+        />
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="secondary" className="h-5 rounded-md px-1.5 text-[11px]">
+            {seedCount} records
+          </Badge>
+          <span>
+            Saved scenarios are persisted as the sandbox&apos;s active seed overlay and snapshotted when a run starts.
+          </span>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function StatusBadge({ status }: { status: SandboxStatus }) {
+  return (
+    <Badge
+      variant="secondary"
+      className={cn(
+        "h-5 rounded-md px-1.5 text-[11px] font-medium",
+        status === "Ready" && "bg-emerald-50 text-emerald-700",
+        status === "Running" && "bg-blue-50 text-blue-700",
+        status === "Needs attention" && "bg-amber-50 text-amber-700",
+      )}
+    >
+      {status}
+    </Badge>
+  );
+}
+
+function DetailSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="space-y-2">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-4 w-80" />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <Skeleton key={index} className="h-[76px] w-full rounded-lg" />
+        ))}
+      </div>
+      <Skeleton className="h-40 w-full rounded-lg" />
+    </div>
+  );
+}

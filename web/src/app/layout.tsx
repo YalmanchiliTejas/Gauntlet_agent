@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { SandboxStoreProvider } from "@/components/sandbox-store";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import "./globals.css";
@@ -16,10 +17,12 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full bg-background text-foreground">
-        <TooltipProvider>
-          {children}
-          <Toaster />
-        </TooltipProvider>
+        <SandboxStoreProvider>
+          <TooltipProvider>
+            {children}
+            <Toaster />
+          </TooltipProvider>
+        </SandboxStoreProvider>
       </body>
     </html>
   );

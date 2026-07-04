@@ -1,7 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { backendFetch, BackendApiError } from "@/lib/server/gauntlet-backend";
-import { repos, twinOptions } from "@/lib/mock-data";
+import { getServerSupabase, isDevBypass } from "@/lib/server/supabase";
+import { repos, twinOptions, type TwinOption } from "@/lib/mock-data";
+
+// Overlay the live twin catalog (shipped services + on-disk versions) onto the
+// static descriptions/tones. Falls back to twinOptions if the backend is down.
+async function resolveTwins(request: NextRequest): Promise<TwinOption[]> {
+  try {
+    const { twins } = await backendFetch<{ twins: { id: string; versions: string[] }[] }>(
+      "/twins",
+      undefined,
+      request,
+    );
+    return twins.map(({ id, versions }) => {
+      const meta = twinOptions.find((twin) => twin.id === id);
+      return {
+        id,
+        name: meta?.name ?? id,
+        versions,
+        description: meta?.description ?? "",
+        tone: meta?.tone ?? "bg-neutral-500",
+      };
+    });
+  } catch {
+    return twinOptions;
+  }
+}
 
 type BackendInstallation = {
   installation_id: number;
@@ -30,8 +55,29 @@ function githubAppName() {
 }
 
 export async function GET(request: NextRequest) {
-  // Dev bypass: skip real backend, return mock repos as "connected" so the form renders.
-  if (process.env.GAUNTLET_DEV_BYPASS === "true" && process.env.NODE_ENV !== "production") {
+  // Dev bypass skips the GitHub backend, but still requires a real Supabase
+  // session when Supabase is configured so creates are actually persisted.
+  if (isDevBypass()) {
+    const supabaseConfigured =
+      Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL) &&
+      Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+    const supabase = await getServerSupabase();
+
+    if (supabaseConfigured && !supabase) {
+      return NextResponse.json({
+        connection: {
+          connected: false,
+          installationId: null,
+          source: "mock",
+          reason: "unauthenticated",
+          message: "Sign in to store sandboxes in Supabase.",
+          installUrl: githubAppInstallUrl(),
+        },
+        repositories: [],
+        twins: twinOptions,
+      });
+    }
+
     return NextResponse.json({
       connection: {
         connected: true,
@@ -88,7 +134,7 @@ export async function GET(request: NextRequest) {
         fullName: repo.full_name,
         defaultBranch: repo.default_branch || "main",
       })),
-      twins: twinOptions,
+      twins: await resolveTwins(request),
     });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "Backend unavailable.";

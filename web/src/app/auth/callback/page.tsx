@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import Link from "next/link";
 
 import { signInWithToken } from "@/lib/sandbox-api";
 import { getSupabaseClient } from "@/lib/supabase";
@@ -40,7 +41,7 @@ export default function AuthCallbackPage() {
     async function storeAndRedirect(token: string) {
       try {
         await signInWithToken(token);
-        router.replace("/sandboxes");
+        router.replace(`${window.location.origin}/sandboxes`);
       } catch {
         fail("Signed in but could not reach the Gauntlet backend.");
       }
@@ -73,9 +74,9 @@ export default function AuthCallbackPage() {
       <div className="flex h-screen flex-col items-center justify-center gap-3 text-center">
         <p className="text-sm font-medium text-destructive">Sign-in failed</p>
         <p className="max-w-xs text-sm text-muted-foreground">{state.message}</p>
-        <a href="/sandboxes" className="text-sm text-primary underline underline-offset-2">
+        <Link href="/sandboxes" className="text-sm text-primary underline underline-offset-2">
           Back to Gauntlet
-        </a>
+        </Link>
       </div>
     );
   }
