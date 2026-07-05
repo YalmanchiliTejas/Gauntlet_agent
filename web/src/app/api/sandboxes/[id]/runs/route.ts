@@ -161,6 +161,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { status: 201 },
     );
   }
+  const db = supabase;
 
   // ── Fetch context needed for dispatch ─────────────────────────────────────
   const [sandboxResult, scenarioResult, envResult, workflowResult] = await Promise.all([
@@ -201,10 +202,27 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const run = rowToRun(data as unknown as RunRow);
 
+  async function markDispatchError(message: string) {
+    await db
+      .from("sandbox_runs")
+      .update({
+        status: "error",
+        error: message,
+        finished_at: new Date().toISOString(),
+      })
+      .eq("id", run.id);
+    run.status = "error";
+    run.error = message;
+  }
+
   // ── Dispatch to the sandbox runner (best-effort, non-blocking) ───────────
-  if (sandbox) {
+  if (!sandbox) {
+    await markDispatchError("Sandbox not found.");
+  } else {
     const session = await getBackendSession(request);
-    if (session.accessToken) {
+    if (!session.accessToken) {
+      await markDispatchError("No backend bearer token is available. Sign in again or configure GAUNTLET_API_TOKEN.");
+    } else {
       const installationId = await resolveInstallationId(request);
       if (installationId) {
         const sha = await resolveSha(sandbox.repo, sandbox.branch, installationId, request);
@@ -224,46 +242,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           });
 
           if (!dispatch.ok) {
-            // Best-effort: mark run as error if dispatch immediately fails.
-            await supabase
-              .from("sandbox_runs")
-              .update({
-                status: "error",
-                error: `Dispatch failed: ${dispatch.error}`,
-                finished_at: new Date().toISOString(),
-              })
-              .eq("id", run.id);
-            run.status = "error";
-            run.error = `Dispatch failed: ${dispatch.error}`;
+            await markDispatchError(`Dispatch failed: ${dispatch.error}`);
           }
         } else {
-          // Could not resolve SHA — mark as error
-          await supabase
-            .from("sandbox_runs")
-            .update({
-              status: "error",
-              error: `Could not resolve SHA for ${sandbox.repo}@${sandbox.branch}`,
-              finished_at: new Date().toISOString(),
-            })
-            .eq("id", run.id);
-          run.status = "error";
-          run.error = `Could not resolve SHA for ${sandbox.repo}@${sandbox.branch}`;
+          await markDispatchError(`Could not resolve SHA for ${sandbox.repo}@${sandbox.branch}`);
         }
       } else {
-        // No GitHub installation — mark as error
-        await supabase
-          .from("sandbox_runs")
-          .update({
-            status: "error",
-            error: "No GitHub App installation found. Connect GitHub in sandbox settings.",
-            finished_at: new Date().toISOString(),
-          })
-          .eq("id", run.id);
-        run.status = "error";
-        run.error = "No GitHub App installation found. Connect GitHub in sandbox settings.";
+        await markDispatchError("No GitHub App installation found. Connect GitHub in sandbox settings.");
       }
     }
-    // If no backend access token, leave as "queued" — backend can't be called without auth.
   }
 
   return NextResponse.json({ run, source: "supabase" }, { status: 201 });
