@@ -124,8 +124,23 @@ export function RunDetail({ id }: { id: string }) {
 
   const verdictIssues = React.useMemo(() => {
     const issues = run?.verdict?.issues;
-    return Array.isArray(issues) ? issues.map((issue) => String(issue)) : [];
+    if (!Array.isArray(issues)) return [];
+    // Judge issues are objects { issue, recommendation, severity, evidence_steps } — pull
+    // the human-readable fields instead of String(obj) (which renders "[object Object]").
+    return issues.map((raw) => {
+      if (typeof raw === "string") return { text: raw, recommendation: "", severity: "" };
+      const o = (raw ?? {}) as Record<string, unknown>;
+      return {
+        text: String(o.issue ?? o.detail ?? o.message ?? JSON.stringify(o)),
+        recommendation: typeof o.recommendation === "string" ? o.recommendation : "",
+        severity: typeof o.severity === "string" ? o.severity : "",
+      };
+    });
   }, [run]);
+
+  // A run can succeed yet still have judge findings (optimizations). Only call it an error
+  // when the run actually failed or errored.
+  const findingsAreErrors = !!run && (run.status === "failed" || run.status === "error" || !!run.error);
 
   const canFix = !!run && (run.status === "failed" || run.status === "error" || findings.length > 0);
 
@@ -183,17 +198,22 @@ export function RunDetail({ id }: { id: string }) {
             </div>
 
             {(verdictIssues.length > 0 || run.error) && (
-              <Card className="rounded-lg border-red-200 bg-red-50/60 shadow-none">
-                <CardHeader className="border-b border-red-200/70">
-                  <CardTitle className="flex items-center gap-2 text-base text-red-950">
-                    <XCircle className="size-4 text-red-600" />
-                    What went wrong
+              <Card className={`rounded-lg shadow-none ${findingsAreErrors ? "border-red-200 bg-red-50/60" : "border-amber-200 bg-amber-50/60"}`}>
+                <CardHeader className={`border-b ${findingsAreErrors ? "border-red-200/70" : "border-amber-200/70"}`}>
+                  <CardTitle className={`flex items-center gap-2 text-base ${findingsAreErrors ? "text-red-950" : "text-amber-950"}`}>
+                    <XCircle className={`size-4 ${findingsAreErrors ? "text-red-600" : "text-amber-600"}`} />
+                    {findingsAreErrors ? "What went wrong" : `Judge findings (${verdictIssues.length})`}
                   </CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-1.5 p-4 text-sm text-red-900">
+                <CardContent className={`space-y-2.5 p-4 text-sm ${findingsAreErrors ? "text-red-900" : "text-amber-900"}`}>
                   {run.error && <p>{run.error}</p>}
                   {verdictIssues.map((issue, index) => (
-                    <p key={index}>• {issue}</p>
+                    <div key={index}>
+                      <p>• {issue.severity ? `[${issue.severity}] ` : ""}{issue.text}</p>
+                      {issue.recommendation && (
+                        <p className="ml-3 mt-0.5 text-xs opacity-80">↳ {issue.recommendation}</p>
+                      )}
+                    </div>
                   ))}
                 </CardContent>
               </Card>

@@ -19,6 +19,7 @@ type RunnerStatus = {
   found: boolean;
   status?: string;
   verdict?: Record<string, unknown> | null;
+  trajectory?: unknown[] | null;
   error?: string | null;
   exit_code?: number | null;
   finished_at?: string | null;
@@ -89,6 +90,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     .update({
       status: finalStatus,
       verdict: runnerData.verdict ?? null,
+      trajectory: Array.isArray(runnerData.trajectory) ? runnerData.trajectory : [],
       error: runnerData.error ?? null,
       finished_at: runnerData.finished_at ?? new Date().toISOString(),
     })
