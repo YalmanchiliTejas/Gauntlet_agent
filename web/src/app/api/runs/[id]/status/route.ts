@@ -19,11 +19,39 @@ type RunnerStatus = {
   found: boolean;
   status?: string;
   verdict?: Record<string, unknown> | null;
-  trajectory?: unknown[] | null;
+  trajectory?: unknown;
   error?: string | null;
   exit_code?: number | null;
   finished_at?: string | null;
 };
+
+function normalizeTrajectory(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+
+  const text = value.trim();
+  if (!text) return [];
+
+  try {
+    const parsed = JSON.parse(text) as unknown;
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // Native traces are often JSONL, not a single JSON array.
+  }
+
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        return null;
+      }
+    })
+    .filter((step): step is unknown => step !== null);
+}
 
 /**
  * GET /api/runs/[id]/status
@@ -56,8 +84,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const run = rowToRun(data as unknown as RunRow);
 
-  // Already in a terminal state — return immediately, no backend poll needed.
-  if (TERMINAL.has(run.status)) {
+  // Already in a terminal state with a stored trace — return immediately, no backend poll needed.
+  // Terminal rows with an empty trace may be older partial syncs, so allow one backend refresh.
+  if (TERMINAL.has(run.status) && run.trajectory.length > 0) {
     return NextResponse.json({ run, synced: false, source: "supabase" });
   }
 
@@ -78,6 +107,8 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ run, synced: false, source: "supabase" });
   }
 
+  const normalizedTrajectory = normalizeTrajectory(runnerData.trajectory);
+
   if (!runnerData.found || !runnerData.status || !TERMINAL.has(STATUS_MAP[runnerData.status] ?? "")) {
     // Still running on the backend side.
     return NextResponse.json({ run, synced: false, source: "supabase" });
@@ -90,7 +121,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     .update({
       status: finalStatus,
       verdict: runnerData.verdict ?? null,
-      trajectory: Array.isArray(runnerData.trajectory) ? runnerData.trajectory : [],
+      trajectory: normalizedTrajectory,
       error: runnerData.error ?? null,
       finished_at: runnerData.finished_at ?? new Date().toISOString(),
     })
