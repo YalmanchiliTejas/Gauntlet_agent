@@ -9,6 +9,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   ExternalLink,
+  ExternalLink,
   Loader2,
   RefreshCw,
   ScanSearch,
