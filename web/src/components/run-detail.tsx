@@ -8,6 +8,7 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  ExternalLink,
   Loader2,
   RefreshCw,
   ScanSearch,
@@ -153,6 +154,14 @@ export function RunDetail({ id }: { id: string }) {
   const findingsAreErrors = !!run && (run.status === "failed" || run.status === "error" || !!run.error);
 
   const canFix = !!run && (run.status === "failed" || run.status === "error" || findings.length > 0);
+  const isFixRun = !!run?.fixOf;
+  const fixPrUrl = typeof run?.verdict?.pr_url === "string" ? run.verdict.pr_url : null;
+  const fixNote = typeof run?.verdict?.note === "string" ? run.verdict.note : null;
+  const fixDiff = typeof run?.verdict?.diff === "string" ? run.verdict.diff : null;
+  const changedFiles = Array.isArray(run?.verdict?.changed_files)
+    ? run.verdict.changed_files.filter((file): file is string => typeof file === "string")
+    : [];
+  const showFixResult = isFixRun && (fixPrUrl || fixNote || fixDiff || changedFiles.length > 0 || run?.status === "succeeded");
 
   return (
     <AppShell>
@@ -249,6 +258,48 @@ export function RunDetail({ id }: { id: string }) {
               </Card>
             )}
 
+            {showFixResult && (
+              <Card className="rounded-lg border-emerald-200 bg-emerald-50/60 shadow-none">
+                <CardHeader className="border-b border-emerald-200/70">
+                  <CardTitle className="flex items-center gap-2 text-base text-emerald-950">
+                    <Wrench className="size-4 text-emerald-700" />
+                    Fix result
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3 p-4 text-sm text-emerald-900">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <p>{fixNote ?? (fixPrUrl ? "The verified fix is ready for review." : "Fix completed, but no PR URL was returned by the backend.")}</p>
+                    {fixPrUrl && (
+                      <a
+                        href={fixPrUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-background px-2.5 text-sm font-medium text-emerald-900 transition-colors hover:bg-emerald-100"
+                      >
+                        Open PR
+                        <ExternalLink className="size-4" />
+                      </a>
+                    )}
+                  </div>
+                  {changedFiles.length > 0 && (
+                    <div>
+                      <p className="text-xs font-medium uppercase tracking-normal text-emerald-800">Changed files</p>
+                      <ul className="mt-1 list-inside list-disc space-y-0.5 font-mono text-xs">
+                        {changedFiles.map((file) => (
+                          <li key={file}>{file}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {fixDiff && (
+                    <pre className="max-h-80 overflow-auto rounded-md border border-emerald-200 bg-background p-3 text-xs text-foreground">
+                      {fixDiff}
+                    </pre>
+                  )}
+                </CardContent>
+              </Card>
+            )}
+
             <Card className="rounded-lg shadow-none">
               <CardHeader className="border-b">
                 <CardTitle className="text-base">Trace</CardTitle>
@@ -267,7 +318,9 @@ export function RunDetail({ id }: { id: string }) {
                   </ol>
                 ) : (
                   <p className="p-6 text-sm text-muted-foreground">
-                    No trace yet — this run hasn’t executed.
+                    {isFixRun
+                      ? "This fix attempt did not return a workflow execution trace. Fix output appears above when the backend returns it."
+                      : "No trace yet — this run hasn’t executed."}
                   </p>
                 )}
               </CardContent>
