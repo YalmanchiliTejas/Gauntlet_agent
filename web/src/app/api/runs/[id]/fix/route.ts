@@ -72,7 +72,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const { data: source, error: findError } = await supabase
     .from("sandbox_runs")
-    .select("sandbox_id, workflow_id")
+    .select("sandbox_id, workflow_id, verdict, trajectory")
     .eq("id", id)
     .maybeSingle();
   if (findError) return NextResponse.json({ detail: findError.message }, { status: 500 });
@@ -80,6 +80,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const sandboxId = (source as { sandbox_id: string }).sandbox_id;
   const workflowId = (source as { workflow_id: string | null }).workflow_id;
+  // Carry the run's own judge findings into the fix so the fixer targets exactly those
+  // instead of re-discovering with a fresh (stochastic) judge pass.
+  const seedVerdict = (source as { verdict: Record<string, unknown> | null }).verdict;
+  const seedTrajectory = (source as { trajectory: unknown }).trajectory;
 
   const { data: sbRow } = await supabase
     .from("sandboxes")
@@ -128,10 +132,22 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
               ref: sandbox.branch,
               installation_id: installationId,
               workflow_id: run.id, // the fixer reports back keyed by this
+              seed_verdict: seedVerdict,
+              seed_trajectory: Array.isArray(seedTrajectory) ? seedTrajectory : undefined,
             }),
           },
           request,
         );
+        const { data: accepted } = await supabase
+          .from("sandbox_runs")
+          .update({ status: "running" })
+          .eq("id", run.id)
+          .select(RUN_COLUMNS_WITH_WORKFLOW)
+          .single();
+        if (accepted) {
+          return NextResponse.json({ run: rowToRun(accepted as unknown as RunRow), source: "supabase" }, { status: 201 });
+        }
+        run.status = "running";
       } catch (e) {
         await fail(`Fix dispatch failed: ${e instanceof Error ? e.message : String(e)}`);
       }

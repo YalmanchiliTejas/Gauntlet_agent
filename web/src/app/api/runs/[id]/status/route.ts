@@ -11,7 +11,7 @@ const TERMINAL = new Set(["succeeded", "failed", "canceled", "error"]);
 const STATUS_MAP: Record<string, string> = {
   passed: "succeeded",
   failed: "failed",
-  error: "failed",
+  error: "error",
   canceled: "canceled",
 };
 

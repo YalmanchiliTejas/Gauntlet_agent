@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import sys
+from urllib.parse import urlparse
 
 
 def _attrs(span: dict) -> dict:
@@ -92,8 +93,13 @@ def from_egress(events: list[dict]) -> list[dict]:
     for i, e in enumerate(events):
         cid = f"e{i}"
         ts = e.get("ts", 0)
+        svc = e.get("service") or "http"
+        # Per-endpoint tool name (e.g. "slack.conversations.history") so redundancy/failure
+        # findings group by endpoint like the instrumented path, not lumped under the service.
+        endpoint = urlparse(e.get("url") or "").path.rstrip("/").rsplit("/", 1)[-1]
+        tool = f"{svc}.{endpoint}" if endpoint else svc
         steps.append({"type": "tool_call", "id": cid, "ts": ts,
-                      "tool": e.get("service") or "http",
+                      "tool": tool,
                       "args": {"method": e.get("method"), "url": e.get("url")}})
         status = e.get("status")
         denied = e.get("mode") == "deny" or status == 403
@@ -166,11 +172,15 @@ def _demo() -> None:
     assert [s["type"] for s in merged] == [s["type"] for s in steps], merged
     # egress fallback: uninstrumented agent -> trajectory from the proxy log
     eg = from_egress([
-        {"ts": 1, "service": "hubspot", "method": "GET", "url": "https://api.hubapi.com/x", "status": 200},
+        {"ts": 1, "service": "slack", "method": "GET", "url": "https://slack.com/api/conversations.history?channel=C1", "status": 200},
         {"ts": 2, "service": "twilio", "method": "POST", "url": "https://api.twilio.com/y", "status": 403, "mode": "deny"},
     ])
     assert [s["type"] for s in eg] == ["tool_call", "tool_result", "tool_call", "tool_result"], eg
     assert eg[1]["ok"] is True and eg[3]["ok"] is False and "denied" in eg[3]["error"], eg
+    # per-endpoint tool name derived from the URL path (query stripped)
+    assert eg[0]["tool"] == "slack.conversations.history", eg[0]
+    assert eg[2]["tool"] == "twilio.y", eg[2]
+    assert from_egress([{"service": "slack", "url": ""}])[0]["tool"] == "slack"  # no path -> service only
     print("ok")
 
 

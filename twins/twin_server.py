@@ -81,7 +81,7 @@ async def handle(full: str, request: Request):
         if method == "POST":
             payload, status = twin.create(resource, body)
         elif method == "GET" and rid is None:
-            payload, status = twin.list(resource)
+            payload, status = twin.list(resource, dict(request.query_params))
         elif method == "GET":
             payload, status = twin.retrieve(resource, rid)
         elif method in ("PUT", "PATCH"):
