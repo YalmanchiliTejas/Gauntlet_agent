@@ -206,6 +206,7 @@ class WorkflowGenerationRequest:
     declared_secrets: list[str] = field(default_factory=list)
     egress_domains: list[str] = field(default_factory=list)
     live_service_approval: bool = False
+    focus: str | None = None
     coverage: dict[str, Any] = field(default_factory=dict)
     planner: PlannerMode = "auto"
     planner_model: str | None = None

@@ -490,6 +490,7 @@ export function GenerateWorkflowSheet({
   const [sandboxId, setSandboxId] = React.useState("");
   const [workflowName, setWorkflowName] = React.useState("");
   const [focus, setFocus] = React.useState("");
+  const [focusAreas, setFocusAreas] = React.useState<string[]>([]);
   const [docs, setDocs] = React.useState<DocInput[]>([{ title: "", text: "" }]);
   const [count, setCount] = React.useState(3);
   const [generating, setGenerating] = React.useState(false);
@@ -522,10 +523,11 @@ export function GenerateWorkflowSheet({
     setError(null);
     setLastResult(null);
     try {
+      const combinedFocus = [focus.trim(), ...focusAreas].filter(Boolean).join(", ");
       const result = await generateWorkflows({
         sandboxId,
         workflowName,
-        focus,
+        focus: combinedFocus,
         docs: filled,
         services,
         count,
@@ -542,6 +544,7 @@ export function GenerateWorkflowSheet({
         );
         setWorkflowName("");
         setFocus("");
+        setFocusAreas([]);
         setDocs([{ title: "", text: "" }]);
       }
       await onGenerated();
@@ -623,7 +626,7 @@ export function GenerateWorkflowSheet({
               onChange={(event) => setFocus(event.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Optional. Use this to target a product area, risk, integration, or failure mode.
+              Optional. Free text plus any selected areas below are combined to steer generation.
             </p>
             <div className="flex flex-wrap gap-2">
               {[
@@ -633,17 +636,24 @@ export function GenerateWorkflowSheet({
                 "Failure recovery",
                 "Security-sensitive flows",
                 "Regression coverage",
-              ].map((item) => (
-                <Button
-                  key={item}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setFocus(item)}
-                >
-                  {item}
-                </Button>
-              ))}
+              ].map((item) => {
+                const selected = focusAreas.includes(item);
+                return (
+                  <Button
+                    key={item}
+                    type="button"
+                    variant={selected ? "default" : "outline"}
+                    size="sm"
+                    onClick={() =>
+                      setFocusAreas((current) =>
+                        selected ? current.filter((x) => x !== item) : [...current, item],
+                      )
+                    }
+                  >
+                    {item}
+                  </Button>
+                );
+              })}
             </div>
           </div>
 
