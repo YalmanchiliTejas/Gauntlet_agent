@@ -55,7 +55,7 @@ function normalizeTrajectory(value: unknown): unknown[] {
     .filter((step): step is unknown => step !== null);
 }
 
-function isOrphanedQueuedRun(createdAt: string): boolean {
+function isOrphanedRun(createdAt: string): boolean {
   const created = Date.parse(createdAt);
   return Number.isFinite(created) && Date.now() - created > ORPHANED_RUN_TIMEOUT_MS;
 }
@@ -117,12 +117,17 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   const normalizedTrajectory = normalizeTrajectory(runnerData.trajectory);
 
   if (!runnerData.found) {
-    if (run.status === "queued" && isOrphanedQueuedRun(run.createdAt)) {
+    // The backend has no record of this run. If it's been stuck past the timeout in a
+    // non-terminal state (queued OR running — e.g. the outcome row was lost during a DB
+    // outage), force-fail it so the UI can't hang forever. A genuinely in-flight fix has
+    // an outcome row (found: true) and is handled by the backend TTL above, so this only
+    // fires on truly orphaned runs.
+    if ((run.status === "queued" || run.status === "running") && isOrphanedRun(run.createdAt)) {
       const { data: updated, error: updateError } = await supabase
         .from("sandbox_runs")
         .update({
           status: "error",
-          error: "Run was never accepted by the sandbox backend. Start a new run after reconnecting backend auth.",
+          error: "Run was never accepted or lost by the sandbox backend. Start a new run.",
           finished_at: new Date().toISOString(),
         })
         .eq("id", id)
