@@ -8,6 +8,7 @@ import {
   AlertCircle,
   ArrowLeft,
   CheckCircle2,
+  ExternalLink,
   Loader2,
   RefreshCw,
   ScanSearch,
@@ -153,6 +154,7 @@ export function RunDetail({ id }: { id: string }) {
   const findingsAreErrors = !!run && (run.status === "failed" || run.status === "error" || !!run.error);
 
   const canFix = !!run && (run.status === "failed" || run.status === "error" || findings.length > 0);
+  const fixPrUrl = typeof run?.verdict?.pr_url === "string" ? run.verdict.pr_url : null;
 
   return (
     <AppShell>
@@ -245,6 +247,29 @@ export function RunDetail({ id }: { id: string }) {
                   {findings.map((finding, index) => (
                     <FindingCard key={index} finding={finding} />
                   ))}
+                </CardContent>
+              </Card>
+            )}
+
+            {fixPrUrl && (
+              <Card className="rounded-lg border-emerald-200 bg-emerald-50/60 shadow-none">
+                <CardHeader className="border-b border-emerald-200/70">
+                  <CardTitle className="flex items-center gap-2 text-base text-emerald-950">
+                    <Wrench className="size-4 text-emerald-700" />
+                    Fix PR opened
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="flex flex-col gap-3 p-4 text-sm text-emerald-900 sm:flex-row sm:items-center sm:justify-between">
+                  <p>{typeof run.verdict.note === "string" ? run.verdict.note : "The verified fix is ready for review."}</p>
+                  <a
+                    href={fixPrUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-emerald-300 bg-background px-2.5 text-sm font-medium text-emerald-900 transition-colors hover:bg-emerald-100"
+                  >
+                    Open PR
+                    <ExternalLink className="size-4" />
+                  </a>
                 </CardContent>
               </Card>
             )}
