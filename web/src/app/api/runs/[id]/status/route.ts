@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { backendFetch, getBackendSession } from "@/lib/server/gauntlet-backend";
+import { getBackendSession } from "@/lib/server/gauntlet-backend";
 import { getServerSupabase } from "@/lib/server/supabase";
 import { rowToRun, RUN_COLUMNS_WITH_WORKFLOW, type RunRow } from "@/lib/server/workflow-map";
 
@@ -60,19 +60,18 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ run, synced: false, source: "supabase" });
   }
 
-  // Still active — ask the backend runner store for an update.
+  // Still active — ask the backend for an update. /run-status is unauthenticated, so poll
+  // it directly instead of through the bearer-gated backendFetch: the server-side session
+  // token is unreliable and isn't needed here, and gating on it left runs stuck at "queued".
   const session = await getBackendSession(request);
-  if (!session.accessToken) {
-    return NextResponse.json({ run, synced: false, source: "supabase" });
-  }
-
   let runnerData: RunnerStatus;
   try {
-    runnerData = await backendFetch<RunnerStatus>(
-      `/api/sandbox/run-status?workflow_id=${encodeURIComponent(id)}`,
-      undefined,
-      request,
+    const res = await fetch(
+      `${session.apiUrl}/api/sandbox/run-status?workflow_id=${encodeURIComponent(id)}`,
+      { cache: "no-store" },
     );
+    if (!res.ok) throw new Error(`run-status ${res.status}`);
+    runnerData = (await res.json()) as RunnerStatus;
   } catch {
     // Backend unreachable — return what Supabase has, client will retry.
     return NextResponse.json({ run, synced: false, source: "supabase" });
