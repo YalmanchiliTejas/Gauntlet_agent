@@ -110,6 +110,24 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!res.ok) throw new Error(`run-status ${res.status}`);
     runnerData = (await res.json()) as RunnerStatus;
   } catch {
+    // Backend unreachable or erroring (e.g. /run-status 500s). Don't let that hang the run
+    // forever: if it's a non-terminal run past the orphan timeout, force-fail it here too —
+    // the success path below (and its orphan check) never runs when the fetch throws.
+    if ((run.status === "queued" || run.status === "running") && isOrphanedRun(run.createdAt)) {
+      const { data: updated } = await supabase
+        .from("sandbox_runs")
+        .update({
+          status: "error",
+          error: "Sandbox backend unreachable and run exceeded the timeout. Start a new run.",
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+        .select(RUN_COLUMNS_WITH_WORKFLOW)
+        .single();
+      if (updated) {
+        return NextResponse.json({ run: rowToRun(updated as unknown as RunRow), synced: true, source: "supabase" });
+      }
+    }
     // Backend unreachable — return what Supabase has, client will retry.
     return NextResponse.json({ run, synced: false, source: "supabase" });
   }
