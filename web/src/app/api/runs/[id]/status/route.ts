@@ -15,6 +15,8 @@ const STATUS_MAP: Record<string, string> = {
   canceled: "canceled",
 };
 
+const ORPHANED_RUN_TIMEOUT_MS = 20 * 60 * 1000;
+
 type RunnerStatus = {
   found: boolean;
   status?: string;
@@ -51,6 +53,11 @@ function normalizeTrajectory(value: unknown): unknown[] {
       }
     })
     .filter((step): step is unknown => step !== null);
+}
+
+function isOrphanedQueuedRun(createdAt: string): boolean {
+  const created = Date.parse(createdAt);
+  return Number.isFinite(created) && Date.now() - created > ORPHANED_RUN_TIMEOUT_MS;
 }
 
 /**
@@ -109,7 +116,27 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const normalizedTrajectory = normalizeTrajectory(runnerData.trajectory);
 
-  if (!runnerData.found || !runnerData.status || !TERMINAL.has(STATUS_MAP[runnerData.status] ?? "")) {
+  if (!runnerData.found) {
+    if (run.status === "queued" && isOrphanedQueuedRun(run.createdAt)) {
+      const { data: updated, error: updateError } = await supabase
+        .from("sandbox_runs")
+        .update({
+          status: "error",
+          error: "Run was never accepted by the sandbox backend. Start a new run after reconnecting backend auth.",
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+        .select(RUN_COLUMNS_WITH_WORKFLOW)
+        .single();
+
+      if (!updateError && updated) {
+        return NextResponse.json({ run: rowToRun(updated as unknown as RunRow), synced: true, source: "supabase" });
+      }
+    }
+    return NextResponse.json({ run, synced: false, source: "supabase" });
+  }
+
+  if (!runnerData.status || !TERMINAL.has(STATUS_MAP[runnerData.status] ?? "")) {
     // Still running on the backend side.
     return NextResponse.json({ run, synced: false, source: "supabase" });
   }
