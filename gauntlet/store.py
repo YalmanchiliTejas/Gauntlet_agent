@@ -32,7 +32,9 @@ def _get_pool() -> Any:
         from psycopg_pool import ConnectionPool
         from psycopg.rows import dict_row
 
-        _pool = ConnectionPool(_DB_URL, kwargs={"row_factory": dict_row},
+        # prepare_threshold=None: no implicit prepared statements, required for Supabase's
+        # pgbouncer transaction-mode pooler (else "prepared statement _pg3_* does not exist").
+        _pool = ConnectionPool(_DB_URL, kwargs={"row_factory": dict_row, "prepare_threshold": None},
                                min_size=1, max_size=10, open=True)
     return _pool
 
