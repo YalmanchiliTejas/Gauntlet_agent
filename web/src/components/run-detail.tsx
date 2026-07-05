@@ -51,7 +51,17 @@ export function RunDetail({ id }: { id: string }) {
     setLoading(true);
     setError(null);
     try {
-      setRun(await getRun(id));
+      const fetched = await getRun(id);
+      if (fetched.trajectory.length === 0) {
+        try {
+          const { run: synced } = await pollRunStatus(id);
+          setRun(synced);
+          return;
+        } catch {
+          // Keep the Supabase row if the backend status endpoint is unavailable.
+        }
+      }
+      setRun(fetched);
     } catch {
       setError("This run could not be found.");
     } finally {
