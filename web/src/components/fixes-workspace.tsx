@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { AlertCircle, ArrowUpRight, RefreshCw, Wrench } from "lucide-react";
+import { AlertCircle, ArrowUpRight, ExternalLink, RefreshCw, Wrench } from "lucide-react";
 import { AppShell } from "@/components/app-shell";
 import { RunStatusBadge } from "@/components/run-status-badge";
 import { Button } from "@/components/ui/button";
@@ -64,15 +64,14 @@ export function FixesWorkspace() {
           <Card className="rounded-lg shadow-none">
             <CardContent className="divide-y p-0">
               {fixes.map((run) => (
-                <Link
+                <div
                   key={run.id}
-                  href={`/runs/${run.id}`}
                   className="grid gap-3 p-4 transition-colors hover:bg-muted/60 sm:grid-cols-[1fr_120px_160px_36px] sm:items-center"
                 >
                   <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-foreground">
+                    <Link href={`/runs/${run.id}`} className="truncate text-sm font-medium text-foreground hover:underline">
                       {run.workflowName ?? "Fix run"}
-                    </div>
+                    </Link>
                     <div className="mt-1 text-xs text-muted-foreground">
                       Fix of {run.fixOf} · {run.trajectory.length} step
                       {run.trajectory.length === 1 ? "" : "s"}
@@ -82,10 +81,8 @@ export function FixesWorkspace() {
                   <div className="text-sm text-muted-foreground">
                     {new Date(run.createdAt).toLocaleString()}
                   </div>
-                  <span className="hidden size-7 items-center justify-center justify-self-end rounded-md text-muted-foreground sm:inline-flex">
-                    <ArrowUpRight className="size-4" />
-                  </span>
-                </Link>
+                  <FixRunAction run={run} />
+                </div>
               ))}
             </CardContent>
           </Card>
@@ -104,5 +101,31 @@ export function FixesWorkspace() {
         )}
       </main>
     </AppShell>
+  );
+}
+
+function FixRunAction({ run }: { run: Run }) {
+  const prUrl = typeof run.verdict.pr_url === "string" ? run.verdict.pr_url : null;
+  if (prUrl) {
+    return (
+      <a
+        href={prUrl}
+        target="_blank"
+        rel="noreferrer"
+        className="inline-flex size-7 items-center justify-center justify-self-end rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground"
+        aria-label="Open fix PR"
+      >
+        <ExternalLink className="size-4" />
+      </a>
+    );
+  }
+  return (
+    <Link
+      href={`/runs/${run.id}`}
+      className="hidden size-7 items-center justify-center justify-self-end rounded-md text-muted-foreground transition-colors hover:bg-background hover:text-foreground sm:inline-flex"
+      aria-label="Open fix run"
+    >
+      <ArrowUpRight className="size-4" />
+    </Link>
   );
 }

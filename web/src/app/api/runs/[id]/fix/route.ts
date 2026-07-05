@@ -125,6 +125,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             body: JSON.stringify({
               repo: sandbox.repo,
               sha,
+              ref: sandbox.branch,
               installation_id: installationId,
               workflow_id: run.id, // the fixer reports back keyed by this
             }),
