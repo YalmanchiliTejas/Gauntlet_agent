@@ -142,7 +142,9 @@ def judge(trace_path: str, sender: Sender | None = None, max_steps: int = 12,
             transcript.append(f"Action: {json.dumps(action)}\nObservation:\n{obs[:_OBS_CAP]}")
             continue
         transcript.append("Observation: malformed action. Emit one tool or finish object.")
-    return {"verdict": "warn", "issues": [],
+    # Loop gave up without a finish (LLM misbehaving / calls failing). Still report the
+    # objective mechanical findings so redundant/failed/retry never silently vanish.
+    return {"verdict": "warn", "issues": _merge_mechanical([], steps),
             "steps": max_steps, "note": "step budget exhausted without finishing"}
 
 
