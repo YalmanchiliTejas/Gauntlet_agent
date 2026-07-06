@@ -275,6 +275,32 @@ async def sandbox_exec(payload: dict, x_sandbox_secret: str | None = Header(None
         shutil.rmtree(workdir, ignore_errors=True)
 
 
+@app.post("/sandbox/fix")
+async def sandbox_fix(payload: dict, x_sandbox_secret: str | None = Header(None)):
+    """Run the find-and-fix loop, delegated from Fly. Codex runs HERE (authenticated on this
+    droplet), and the outcome is POSTed to callback_url so the UI's fix run resolves.
+    Body: {repo, sha, ref?, installation_id, workflow_id?, callback_url?, callback_secret?,
+           seed_verdict?, seed_trajectory?}."""
+    if config.SANDBOX_INBOUND_SECRET and not hmac.compare_digest(
+            x_sandbox_secret or "", config.SANDBOX_INBOUND_SECRET):
+        raise HTTPException(401, "bad sandbox secret")
+    from . import fix, runner
+    try:
+        job = runner.Job(
+            repo=payload["repo"], sha=payload["sha"],
+            ref=payload.get("ref", payload["sha"]),
+            installation_id=int(payload["installation_id"]),
+            workflow_id=payload.get("workflow_id"),
+            callback_url=payload.get("callback_url"),
+            callback_secret=payload.get("callback_secret"),
+            seed_verdict=payload.get("seed_verdict"),
+            seed_trajectory=payload.get("seed_trajectory"))
+    except (KeyError, ValueError, TypeError):
+        raise HTTPException(400, "need repo, sha, installation_id")
+    fix.submit(job)
+    return {"queued": "fix", "workflow_id": payload.get("workflow_id")}
+
+
 @app.post("/slack/command")
 async def slack_command(
     request: Request,

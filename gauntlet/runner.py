@@ -79,6 +79,10 @@ class Job:
     # and stores the result in its own DB via this callback).
     callback_url: str | None = None
     callback_secret: str | None = None
+    # Carried over from the run the user clicked "Fix" on: seed the fixer with those findings
+    # instead of a fresh (stochastic) discovery pass. Only the fixer reads them.
+    seed_verdict: dict | None = None
+    seed_trajectory: list | None = None
 
 
 # ponytail: in-memory, single-process. One task per (repo, ref); a newer push

@@ -7,11 +7,14 @@ verification loop re-runs the gauntlet (build+run+judge) + scanners each iterati
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 import subprocess
 import tempfile
 from itertools import count
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 from codeindex import build
 from codeindex.context import context_for, render
@@ -75,15 +78,22 @@ async def _run(job: Job) -> None:
         plan = build_resolver.resolve(root)
         names = count()
 
-        # Initial pass: gauntlet+judge + scanners + (optional) agentic investigation -> findings.
-        first = await run_and_judge(root, plan, f"{job.repo.replace('/', '-')}-fix{next(names)}-{job.sha[:7]}", workdir)
-        before_verdict = first["verdict"].get("verdict", "n/a")
-        findings = _findings_from(first["verdict"], first["trajectory"], root)
+        # Discovery: seed from the run the user clicked "Fix" on when we have it (avoids a
+        # fresh, stochastic judge pass); otherwise run+judge to find the findings.
+        if (job.seed_verdict or {}).get("issues"):
+            before_verdict = job.seed_verdict.get("verdict", "n/a")
+            findings = (from_judge(job.seed_verdict, job.seed_trajectory or [], build(root))
+                        + codescan_static.scan(root))
+        else:
+            first = await run_and_judge(root, plan, f"{job.repo.replace('/', '-')}-fix{next(names)}-{job.sha[:7]}", workdir)
+            before_verdict = first["verdict"].get("verdict", "n/a")
+            findings = _findings_from(first["verdict"], first["trajectory"], root)
         findings += investigate(root, render(context_for(root, _seed_names(build(root), findings))),
                                 _local_exec(root))
         if not findings:
             await github.complete_check_run(gh, job.repo, check_id, "success",
                                             "Nothing to fix", "No security/redundancy/reliability findings.")
+            await _fire_fix_callback(job, "passed", verdict={"note": "Nothing to fix"})
             return
 
         coder = CodexCoder()  # default; runs codex in the workdir
@@ -114,13 +124,20 @@ async def _run(job: Job) -> None:
         result = await fix_loop(root, findings, coder, verify, context_fn=ctx_fn)
 
         if result.converged:
+            after = snapshot(root)
+            changed_files = sorted(rel for rel in set(before) | set(after) if before.get(rel) != after.get(rel))
+            if not changed_files:
+                await github.complete_check_run(gh, job.repo, check_id, "neutral",
+                                                "No changes produced",
+                                                "Verification passed without any code changes.")
+                await _fire_fix_callback(job, "passed",
+                                         verdict={"note": "Converged with no code changes"})
+                return
             branch = f"gauntlet/fix-{job.sha[:7]}"
             await github.create_branch(gh, job.repo, branch, job.sha)
-            after = snapshot(root)
-            for rel in sorted(set(before) | set(after)):
-                if before.get(rel) != after.get(rel):
-                    await github.put_file(gh, job.repo, branch, rel,
-                                          after[rel].encode(), "gauntlet: automated fix")
+            for rel in changed_files:
+                await github.put_file(gh, job.repo, branch, rel,
+                                      after[rel].encode(), "gauntlet: automated fix")
             fixed = [f for f in findings if f.severity in _SEVERE]  # what verification gated on
             body = pr_body(result, fixed, before_verdict, "pass")
             if new_seen:
@@ -130,11 +147,35 @@ async def _run(job: Job) -> None:
                                        "Gauntlet automated fix", body)
             await github.complete_check_run(gh, job.repo, check_id, "success",
                                             "Fix PR opened", f"Verified fix opened: {url}")
+            await _fire_fix_callback(job, "passed",
+                                     verdict={"note": "Fix PR opened", "pr_url": url,
+                                              "changed_files": changed_files, "diff": result.diff[:40_000]})
         else:
             await github.complete_check_run(gh, job.repo, check_id, "neutral",
                                             "Could not fully verify a fix", report(result, before_verdict))
+            await _fire_fix_callback(job, "failed",
+                                     error="Could not fully verify a fix (see the run's check on GitHub).")
     except Exception as e:
         await github.complete_check_run(gh, job.repo, check_id, "neutral",
                                         "Fix loop failed", f"```\n{e}\n```")
+        await _fire_fix_callback(job, "error", error=str(e))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+async def _fire_fix_callback(job, status: str, *, verdict: dict | None = None,
+                             error: str | None = None) -> None:
+    """Report the fix outcome to the delegating backend (Fly) so the UI's fix run resolves.
+    Best-effort; no callback_url (label-triggered fix) = skip."""
+    if not getattr(job, "callback_url", None):
+        return
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            resp = await c.post(job.callback_url,
+                                headers={"Authorization": f"Bearer {job.callback_secret or ''}"},
+                                json={"status": status, "verdict": verdict, "error": error,
+                                      "workflow_id": job.workflow_id})
+            resp.raise_for_status()
+    except Exception as exc:
+        log.warning("fix callback failed workflow_id=%s: %s", getattr(job, "workflow_id", None), exc)
