@@ -32,16 +32,15 @@ def _ensure_codex_auth() -> None:
         _authed = True
         log.warning("OPENAI_API_KEY not set — codex will 401")
         return
-    # Preferred: key via stdin (the pipe form codex recommends; keeps it out of `ps`).
-    # Fall back to the deprecated-but-working arg form if this codex build won't read stdin.
-    for cmd, stdin in ((["codex", "login", "--api-key"], key + "\n"),
-                       (["codex", "login", "--api-key", key], None)):
-        r = subprocess.run(cmd, input=stdin, capture_output=True, text=True)
-        if r.returncode == 0:
-            _authed = True
-            log.info("codex login ok (%s)", "stdin" if stdin else "arg")
-            return
-        log.warning("codex login failed rc=%s: %s", r.returncode, (r.stdout + r.stderr)[-300:])
+    # codex removed `--api-key`; the key must be piped into `--with-api-key` via stdin
+    # (equivalent to: printenv OPENAI_API_KEY | codex login --with-api-key).
+    r = subprocess.run(["codex", "login", "--with-api-key"], input=key + "\n",
+                       capture_output=True, text=True)
+    if r.returncode == 0:
+        _authed = True
+        log.info("codex login ok")
+        return
+    log.warning("codex login failed rc=%s: %s", r.returncode, (r.stdout + r.stderr)[-300:])
 
 
 def fix_prompt(findings: list[Finding], context: str, failures: str = "") -> str:
