@@ -8,6 +8,7 @@ or local subprocess), keeping this swappable for a Claude-based coder behind the
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -15,6 +16,26 @@ from pathlib import Path
 from findings import Finding, detail_summary
 
 log = logging.getLogger(__name__)
+
+_authed = False
+
+
+def _ensure_codex_auth() -> None:
+    """`codex exec` ignores the OPENAI_API_KEY env var for auth (it defaults to ChatGPT-style
+    auth and 401s) — it needs an explicit login that writes ~/.codex/auth.json. Feed the key
+    via stdin, not argv, so it never shows up in `ps`. Runs once per process."""
+    global _authed
+    if _authed:
+        return
+    _authed = True
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        log.warning("OPENAI_API_KEY not set — codex will 401")
+        return
+    r = subprocess.run(["codex", "login", "--api-key"], input=key + "\n",
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        log.warning("codex login failed (%s): %s", r.returncode, (r.stdout + r.stderr)[-500:])
 
 
 def fix_prompt(findings: list[Finding], context: str, failures: str = "") -> str:
@@ -46,6 +67,7 @@ class CodexCoder:
         if self.run is not None:
             return self.run(f"codex exec {' '.join(self._FLAGS)} "
                             + (f"-m {self.model} " if self.model else "") + shlex.quote(prompt))
+        _ensure_codex_auth()
         p = subprocess.run(argv, cwd=root, capture_output=True, text=True)
         out = (p.stdout + p.stderr)
         if p.returncode != 0:
