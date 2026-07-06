@@ -7,11 +7,14 @@ or local subprocess), keeping this swappable for a Claude-based coder behind the
 """
 from __future__ import annotations
 
+import logging
 import shlex
 import subprocess
 from pathlib import Path
 
 from findings import Finding, detail_summary
+
+log = logging.getLogger(__name__)
 
 
 def fix_prompt(findings: list[Finding], context: str, failures: str = "") -> str:
@@ -31,10 +34,20 @@ class CodexCoder:
         self.run = run            # run(cmd:str)->str in the repo (sandbox/local); None = local subprocess
         self.model = model
 
+    # --dangerously-bypass-approvals-and-sandbox: headless, no TTY, OS sandbox may be absent.
+    # --skip-git-repo-check: the fixer workdir is an extracted tarball, not a git repo; without
+    #   this codex exec exits 1.
+    _FLAGS = ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+
     def propose(self, root: Path, findings: list[Finding], context: str, failures: str = "") -> str:
         prompt = fix_prompt(findings, context, failures)
-        argv = ["codex", "exec"] + (["-m", self.model] if self.model else []) + [prompt]
+        mflag = ["-m", self.model] if self.model else []
+        argv = ["codex", "exec", *self._FLAGS, *mflag, prompt]
         if self.run is not None:
-            return self.run("codex exec " + (f"-m {self.model} " if self.model else "") + shlex.quote(prompt))
+            return self.run(f"codex exec {' '.join(self._FLAGS)} "
+                            + (f"-m {self.model} " if self.model else "") + shlex.quote(prompt))
         p = subprocess.run(argv, cwd=root, capture_output=True, text=True)
-        return (p.stdout + p.stderr)[-8000:]
+        out = (p.stdout + p.stderr)
+        if p.returncode != 0:
+            log.warning("codex exec exited %s\n%s", p.returncode, out[-3000:])
+        return out[-8000:]
