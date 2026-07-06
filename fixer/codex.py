@@ -18,6 +18,14 @@ from findings import Finding, detail_summary
 log = logging.getLogger(__name__)
 
 _authed = False
+# The service user (gauntlet) has HOME=/nonexistent, so codex can't write ~/.codex and login
+# fails ("Permission denied"). Point it at a writable dir for both login and exec.
+_CODEX_HOME = os.environ.get("GAUNTLET_CODEX_HOME", "/tmp/gauntlet-codex-home")
+
+
+def _codex_env() -> dict:
+    os.makedirs(_CODEX_HOME, exist_ok=True)
+    return {**os.environ, "HOME": _CODEX_HOME, "CODEX_HOME": _CODEX_HOME}
 
 
 def _ensure_codex_auth() -> None:
@@ -35,7 +43,7 @@ def _ensure_codex_auth() -> None:
     # codex removed `--api-key`; the key must be piped into `--with-api-key` via stdin
     # (equivalent to: printenv OPENAI_API_KEY | codex login --with-api-key).
     r = subprocess.run(["codex", "login", "--with-api-key"], input=key + "\n",
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=_codex_env())
     if r.returncode == 0:
         _authed = True
         log.info("codex login ok")
@@ -73,7 +81,7 @@ class CodexCoder:
             return self.run(f"codex exec {' '.join(self._FLAGS)} "
                             + (f"-m {self.model} " if self.model else "") + shlex.quote(prompt))
         _ensure_codex_auth()
-        p = subprocess.run(argv, cwd=root, capture_output=True, text=True)
+        p = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=_codex_env())
         out = (p.stdout + p.stderr)
         if p.returncode != 0:
             log.warning("codex exec exited %s\n%s", p.returncode, out[-3000:])
