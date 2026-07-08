@@ -115,7 +115,7 @@ class Twin:
                                             "message": f"no such {resource[:-1]}: {rid}"}})
         return rec, 200
 
-    def list(self, resource):
+    def list(self, resource, params: dict | None = None):
         return self.wrap_list(resource, self._all(resource)), 200
 
     def update(self, resource, rid, body, patch: bool):

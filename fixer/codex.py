@@ -7,11 +7,48 @@ or local subprocess), keeping this swappable for a Claude-based coder behind the
 """
 from __future__ import annotations
 
+import logging
+import os
 import shlex
 import subprocess
 from pathlib import Path
 
 from findings import Finding, detail_summary
+
+log = logging.getLogger(__name__)
+
+_authed = False
+# The service user (gauntlet) has HOME=/nonexistent, so codex can't write ~/.codex and login
+# fails ("Permission denied"). Point it at a writable dir for both login and exec.
+_CODEX_HOME = os.environ.get("GAUNTLET_CODEX_HOME", "/tmp/gauntlet-codex-home")
+
+
+def _codex_env() -> dict:
+    os.makedirs(_CODEX_HOME, exist_ok=True)
+    return {**os.environ, "HOME": _CODEX_HOME, "CODEX_HOME": _CODEX_HOME}
+
+
+def _ensure_codex_auth() -> None:
+    """`codex exec` ignores the OPENAI_API_KEY env var for auth (it defaults to ChatGPT-style
+    auth and 401s) — it needs an explicit login that writes ~/.codex/auth.json. Feed the key
+    via stdin, not argv, so it never shows up in `ps`. Runs once per process."""
+    global _authed
+    if _authed:
+        return
+    key = os.environ.get("OPENAI_API_KEY")
+    if not key:
+        _authed = True
+        log.warning("OPENAI_API_KEY not set — codex will 401")
+        return
+    # codex removed `--api-key`; the key must be piped into `--with-api-key` via stdin
+    # (equivalent to: printenv OPENAI_API_KEY | codex login --with-api-key).
+    r = subprocess.run(["codex", "login", "--with-api-key"], input=key + "\n",
+                       capture_output=True, text=True, env=_codex_env())
+    if r.returncode == 0:
+        _authed = True
+        log.info("codex login ok")
+        return
+    log.warning("codex login failed rc=%s: %s", r.returncode, (r.stdout + r.stderr)[-300:])
 
 
 def fix_prompt(findings: list[Finding], context: str, failures: str = "") -> str:
@@ -31,10 +68,21 @@ class CodexCoder:
         self.run = run            # run(cmd:str)->str in the repo (sandbox/local); None = local subprocess
         self.model = model
 
+    # --dangerously-bypass-approvals-and-sandbox: headless, no TTY, OS sandbox may be absent.
+    # --skip-git-repo-check: the fixer workdir is an extracted tarball, not a git repo; without
+    #   this codex exec exits 1.
+    _FLAGS = ["--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check"]
+
     def propose(self, root: Path, findings: list[Finding], context: str, failures: str = "") -> str:
         prompt = fix_prompt(findings, context, failures)
-        argv = ["codex", "exec"] + (["-m", self.model] if self.model else []) + [prompt]
+        mflag = ["-m", self.model] if self.model else []
+        argv = ["codex", "exec", *self._FLAGS, *mflag, prompt]
         if self.run is not None:
-            return self.run("codex exec " + (f"-m {self.model} " if self.model else "") + shlex.quote(prompt))
-        p = subprocess.run(argv, cwd=root, capture_output=True, text=True)
-        return (p.stdout + p.stderr)[-8000:]
+            return self.run(f"codex exec {' '.join(self._FLAGS)} "
+                            + (f"-m {self.model} " if self.model else "") + shlex.quote(prompt))
+        _ensure_codex_auth()
+        p = subprocess.run(argv, cwd=root, capture_output=True, text=True, env=_codex_env())
+        out = (p.stdout + p.stderr)
+        if p.returncode != 0:
+            log.warning("codex exec exited %s\n%s", p.returncode, out[-3000:])
+        return out[-8000:]

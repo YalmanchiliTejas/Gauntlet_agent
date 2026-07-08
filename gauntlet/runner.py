@@ -79,6 +79,10 @@ class Job:
     # and stores the result in its own DB via this callback).
     callback_url: str | None = None
     callback_secret: str | None = None
+    # Carried over from the run the user clicked "Fix" on: seed the fixer with those findings
+    # instead of a fresh (stochastic) discovery pass. Only the fixer reads them.
+    seed_verdict: dict | None = None
+    seed_trajectory: list | None = None
 
 
 # ponytail: in-memory, single-process. One task per (repo, ref); a newer push
@@ -218,7 +222,8 @@ async def _run(job: Job) -> None:
                             exit_code=result.get("exit_code"), verdict=out["verdict"],
                             trajectory=out.get("trajectory"))
         await _fire_callback(job, "passed" if ok else "failed",
-                             exit_code=result.get("exit_code"), verdict=out["verdict"])
+                             exit_code=result.get("exit_code"), verdict=out["verdict"],
+                             trajectory=out.get("trajectory"))
         await github.complete_check_run(gh_token, job.repo, check_id,
                                         "success" if ok else "failure",
                                         "Passed" if ok else "Failed", summary)
@@ -238,18 +243,21 @@ async def _run(job: Job) -> None:
 
 
 async def _fire_callback(job: Job, status: str, *, exit_code: int | None = None,
-                         verdict: dict | None = None, error: str | None = None) -> None:
+                         verdict: dict | None = None, error: str | None = None,
+                         trajectory=None) -> None:
     """Report the outcome to the delegating backend (Fly). Best-effort — a failed
-    callback must never fail the run. Trajectory is omitted (can be large); the
-    verdict carries the judge summary the UI needs."""
+    callback must never fail the run. The trajectory (capped) rides along so the UI can
+    show what the agent actually did, alongside the judge's verdict."""
     if not job.callback_url:
         return
+    steps = read_trajectory(trajectory)[:500] if trajectory else None  # cap: keep the payload sane
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
+        async with httpx.AsyncClient(timeout=20) as c:
             await c.post(job.callback_url,
                          headers={"Authorization": f"Bearer {job.callback_secret or ''}"},
                          json={"status": status, "exit_code": exit_code,
                                "verdict": verdict, "error": error,
+                               "trajectory": steps,
                                "workflow_id": job.workflow_id})
     except Exception:
         pass

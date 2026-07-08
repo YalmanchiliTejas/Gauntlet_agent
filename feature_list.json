@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "updated": "2026-06-27",
+  "features": [
+    {
+      "id": "workflow-generation-mvp",
+      "priority": 1,
+      "area": "workflows",
+      "title": "Build automatic workflow generation MVP",
+      "user_visible_behavior": "Users provide product docs, repo/runtime context, optional MCP tools, and service clone/twin declarations; Gauntlet generates high-quality runnable workflows with coverage reports, egress policy, seed data requirements, rubrics, and success conditions.",
+      "status": "passing",
+      "verification": [
+        "Given fixture docs and declared service twins, generation returns a product surface map, service map, coverage report, and workflow drafts.",
+        "Generated workflows include concrete success conditions, service routing, seed data requirements, and no fake IDs.",
+        "Validation rejects workflows with undeclared live egress, unknown services, placeholder IDs, or vague success criteria.",
+        "Coverage selection returns distinct workflows across product surfaces, interfaces, services, and difficulty levels."
+      ],
+      "evidence": [
+        "Implemented gauntlet/workflows/schema.py, probe.py, service_map.py, graph.py, mcp_probe.py, rules_planner.py, llm_planner.py, harness.py, generate.py, validate.py, and select.py.",
+        "Added POST /workflows/generate with typed request validation and empty-input UX error.",
+        "Added optional OpenAI-compatible LLM planner with candidate generation and repair pass, keeping deterministic validation and harness scoring as hard gates.",
+        "Added Gauntlet native dry-run scorer to reject workflows that are not concrete, interface-targeted, evidence-rich, routed, seeded, and judgeable.",
+        "Added product-specific documented-chain fallback workflows for sessions, direct scrape, profiles/auth context, files, and agent traces.",
+        "Added tests/test_workflow_generation.py covering multi-service twin generation, MCP tool discovery, unsafe workflow rejection, record-mode mutation rejection, API response shape, malformed request rejection, egress policy safety, fake LLM planning, LLM repair, and workflow target-doc quality regression.",
+        "Verified with python -m py_compile gauntlet/*.py gauntlet/workflows/*.py, python -m unittest tests.test_workflow_generation, python gauntlet/build_resolver.py, and python -m json.tool feature_list.json."
+      ],
+      "notes": "See docs/agent-context/workflow-generation-mvp-plan.md. This is implemented as a hybrid high-quality generator: rules fallback plus optional LLM planner/repair, deterministic validation, harness dry-run scoring, and coverage selection. Future work should connect these contracts to actual sandbox execution and persistence/review UI."
+    },
+    {
+      "id": "run-contract-v1",
+      "priority": 2,
+      "area": "runner",
+      "title": "Define and implement first real run contract",
+      "user_visible_behavior": "A queued job runs a declared customer workflow instead of only checking whether a MicroVM endpoint returns a non-500 status.",
+      "status": "in_progress",
+      "verification": [
+        "POST /api/sandboxes/[id]/runs creates run in Supabase, resolves SHA+installation_id, dispatches to backend trigger endpoint.",
+        "POST /api/runs/[id]/result callback endpoint receives runner outcome and updates Supabase run row.",
+        "Old backend /api/sandbox/trigger accepts task_prompt, twins, workflow_id, callback_url, callback_secret.",
+        "End-to-end: triggering a run from the UI queues it, the runner executes, and the result is reflected in the UI."
+      ],
+      "evidence": [
+        "Extended /Users/aryanjain/projects/Gauntlet/gauntlet/server/routes/sandbox_runner.py ui_trigger to accept all runner.Job workflow params.",
+        "Updated web/src/app/api/sandboxes/[id]/runs/route.ts to fetch installation_id, resolve SHA, and dispatch to backend after creating the Supabase run row.",
+        "Added web/src/app/api/runs/[id]/result/route.ts callback endpoint that verifies SANDBOX_CALLBACK_SECRET and updates sandbox_runs in Supabase.",
+        "Updated branches route to pass through commit_sha from backend.",
+        "Added NEXT_PUBLIC_APP_URL and SANDBOX_CALLBACK_SECRET to .env.example.",
+        "npm run lint: passed. npm run build: passed. Python AST syntax check: passed."
+      ],
+      "notes": "Backend dispatch and callback wiring are in place. End-to-end execution requires: (1) deploy old backend changes to Fly.io, (2) set SANDBOX_CALLBACK_SECRET + NEXT_PUBLIC_APP_URL in both envs, (3) MicroVM infrastructure (S3 bucket, Lambda) for actual code execution. Graceful degradation: if dispatch fails, run is marked error immediately. If callback URL is unreachable (local dev), run stays queued."
+    },
+    {
+      "id": "egress-policy-v1",
+      "priority": 3,
+      "area": "sandbox",
+      "title": "Add explicit egress routing policy model",
+      "user_visible_behavior": "Each run declares allowed domains and twin/live/record routing modes before sandbox execution starts.",
+      "status": "not_started",
+      "verification": [
+        "Validate good and bad policy fixtures.",
+        "Confirm undeclared domains fail closed.",
+        "Confirm policy is included in run artifact output."
+      ],
+      "evidence": [],
+      "notes": "The architecture doc treats default-deny egress as a core safety property."
+    },
+    {
+      "id": "github-app-hardening",
+      "priority": 4,
+      "area": "github",
+      "title": "Harden GitHub webhook and Checks integration",
+      "user_visible_behavior": "Push and PR events are verified, debounced, checked out at the exact commit, and reported back with clear status.",
+      "status": "not_started",
+      "verification": [
+        "Unit-test signature verification, branch delete skip, PR action skip, and job creation.",
+        "Mock GitHub API calls for installation token, tarball download, create check, and complete check.",
+        "Confirm stale run cancellation completes the old check as cancelled."
+      ],
+      "evidence": [],
+      "notes": "Existing code has the core shape but needs tests and production queue decisions."
+    },
+    {
+      "id": "twin-registry-v0",
+      "priority": 5,
+      "area": "twins",
+      "title": "Design first twin registry and seed-data contract",
+      "user_visible_behavior": "A workflow can request a versioned mock service with per-run seed data and deterministic stateful behavior.",
+      "status": "not_started",
+      "verification": [
+        "Document service/version/data boundaries.",
+        "Implement a minimal local twin fixture, likely SQLite-backed.",
+        "Run a POST then GET flow and validate state persists within a run."
+      ],
+      "evidence": [],
+      "notes": "Start with one service shape before generalizing."
+    },
+    {
+      "id": "prior-art-migration-audit",
+      "priority": 6,
+      "area": "migration",
+      "title": "Audit old Gauntlet repo for selective carry-over",
+      "user_visible_behavior": "Engineering can choose which old modules to port, rewrite, or discard with rationale.",
+      "status": "not_started",
+      "verification": [
+        "Create a migration matrix with module, value, dependencies, risks, and decision.",
+        "Run tests in old repo for any candidate before porting.",
+        "Record accepted carry-over in docs."
+      ],
+      "evidence": [],
+      "notes": "High-value candidates include personas, workflow schema/synthesis, Layer 3 evidence/reporting, FastAPI repositories, Slack route ideas, and frontend design system."
+    }
+  ]
+}

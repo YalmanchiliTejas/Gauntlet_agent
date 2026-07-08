@@ -144,6 +144,7 @@ def parse_request(payload: dict[str, Any]) -> WorkflowGenerationRequest:
         declared_secrets=declared_secrets,
         egress_domains=egress_domains,
         live_service_approval=bool(payload.get("live_service_approval", False)),
+        focus=str(payload.get("focus")).strip() or None if payload.get("focus") else None,
         coverage=payload.get("coverage") if isinstance(payload.get("coverage"), dict) else {},
         planner=str(payload.get("planner") or "auto") if str(payload.get("planner") or "auto") in {"auto", "rules", "llm"} else "auto",
         planner_model=str(payload.get("planner_model")) if payload.get("planner_model") else None,

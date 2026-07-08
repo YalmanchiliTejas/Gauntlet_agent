@@ -138,19 +138,33 @@ def _build_generation_prompt(
     count = int(request.coverage.get("candidate_count") or max(int(request.coverage.get("count") or 5) * 3, 10))
     docs_excerpt = "\n\n".join(f"# {doc.title}\n{doc.text[:6000]}" for doc in request.docs)
     docs_excerpt = docs_excerpt[:_MAX_DOC_CHARS]
+    focus = (request.focus or "").strip()
     context = {
         "surface_map": asdict(surface_map),
         "service_map": asdict(service_map),
         "coverage": request.coverage,
         "declared_secrets": request.declared_secrets,
         "egress_domains": request.egress_domains,
+        "focus": focus or None,
         "docs_excerpt": docs_excerpt,
     }
+    focus_line = (
+        f"- FOCUS: bias the workflows toward '{focus}'. Interpret it as the product area, task shape, "
+        "risk, integration, or failure mode the user wants exercised, and skew coverage accordingly.\n"
+        if focus
+        else ""
+    )
     return (
         "You design high-quality executable agent test workflows for Gauntlet.\n"
-        "Generate candidate workflows only from the supplied product docs, surface map, and service/twin map.\n"
+        "First, read the docs and build a mental model of the product's DOMAIN and SURFACE AREA: what is this\n"
+        "product for, who uses it, and what real jobs would its users hand to an AI agent built on top of it?\n"
+        "For example, a finance/accounting product implies tasks like reconciling transactions, categorizing\n"
+        "expenses, or preparing a report. Then generate workflows as the REQUESTS a real user would make to that\n"
+        "agent for help, phrased in the user's voice, grounded in the documented capabilities.\n"
+        "Use only capabilities supported by the supplied docs, surface map, and service/twin map; do not invent product features.\n"
+        + focus_line +
         "Quality bar:\n"
-        "- Each task_prompt must be a realistic user request, not meta commentary.\n"
+        "- Each task_prompt must read as a realistic end-user request to the agent (\"Help me...\", \"Reconcile...\"), not meta commentary about testing.\n"
         "- Be specific about the interface: CLI, Python SDK, JavaScript SDK, REST, MCP, or browser.\n"
         "- Use self-contained literal inputs or resources created in the same task.\n"
         "- Never invent fake IDs, placeholder resources, secret values, or undocumented capabilities.\n"

@@ -1,0 +1,7 @@
+{
+  "runtime": "python",
+  "install": "pip install -r requirements.txt",
+  "run": "python agent.py",
+  "twins": { "slack": "v1" },
+  "modes": { "slack": "twin" }
+}

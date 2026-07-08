@@ -32,7 +32,9 @@ def _get_pool() -> Any:
         from psycopg_pool import ConnectionPool
         from psycopg.rows import dict_row
 
-        _pool = ConnectionPool(_DB_URL, kwargs={"row_factory": dict_row},
+        # prepare_threshold=None: no implicit prepared statements, required for Supabase's
+        # pgbouncer transaction-mode pooler (else "prepared statement _pg3_* does not exist").
+        _pool = ConnectionPool(_DB_URL, kwargs={"row_factory": dict_row, "prepare_threshold": None},
                                min_size=1, max_size=10, open=True)
     return _pool
 
@@ -120,6 +122,14 @@ class Store:
             "select id, user_id, workflow_id, repo, sha, ref, status, exit_code, verdict, "
             "trajectory, error, created_at, finished_at from runs where id = %s",
             (run_id,), fetch="one")
+
+    def get_run_by_workflow_id(self, workflow_id: str) -> dict | None:
+        """Look up a run by the caller-supplied workflow_id (e.g. the Supabase run UUID)."""
+        return self._exec(
+            "select id, user_id, workflow_id, repo, sha, ref, status, exit_code, verdict, "
+            "trajectory, error, created_at, finished_at from runs where workflow_id = %s "
+            "order by created_at desc limit 1",
+            (workflow_id,), fetch="one")
 
     def list_runs(self, *, user_id: str | None = None, repo: str | None = None,
                   limit: int = 50) -> list[dict]:
