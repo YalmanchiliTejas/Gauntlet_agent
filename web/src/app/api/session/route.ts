@@ -30,7 +30,7 @@ function createDevAccessToken(): string {
     base64UrlJson({ alg: "none", typ: "JWT" }),
     base64UrlJson({
       aud: "authenticated",
-      exp: now + 60 * 60 * 24,
+      exp: now + 60 * 60 * 24 * 30,
       iat: now,
       iss: "gauntlet-dev-bypass",
       role: "authenticated",

@@ -82,11 +82,16 @@ async def _run(job: Job) -> None:
         # fresh, stochastic judge pass); otherwise run+judge to find the findings.
         if (job.seed_verdict or {}).get("issues"):
             before_verdict = job.seed_verdict.get("verdict", "n/a")
+            discovery_verdict = job.seed_verdict
+            discovery_traj = list(job.seed_trajectory or [])
             findings = (from_judge(job.seed_verdict, job.seed_trajectory or [], build(root))
                         + codescan_static.scan(root))
         else:
             first = await run_and_judge(root, plan, f"{job.repo.replace('/', '-')}-fix{next(names)}-{job.sha[:7]}", workdir)
             before_verdict = first["verdict"].get("verdict", "n/a")
+            discovery_verdict = first["verdict"]
+            discovery_traj = ([s.raw for s in load_trajectory(first["trajectory"])]
+                              if first["trajectory"] else [])
             findings = _findings_from(first["verdict"], first["trajectory"], root)
         findings += investigate(root, render(context_for(root, _seed_names(build(root), findings))),
                                 _local_exec(root))
@@ -123,6 +128,12 @@ async def _run(job: Job) -> None:
         before = snapshot(root)
         result = await fix_loop(root, findings, coder, verify, context_fn=ctx_fn)
 
+        def save_fix(status: str, pr_url: str | None = None) -> None:
+            _persist_fix(job, status=status, iterations=result.iterations,
+                         before_verdict=before_verdict, verdict=discovery_verdict,
+                         findings=findings, trajectory=discovery_traj,
+                         patch=result.diff, pr_url=pr_url)
+
         if result.converged:
             after = snapshot(root)
             changed_files = sorted(rel for rel in set(before) | set(after) if before.get(rel) != after.get(rel))
@@ -130,6 +141,7 @@ async def _run(job: Job) -> None:
                 await github.complete_check_run(gh, job.repo, check_id, "neutral",
                                                 "No changes produced",
                                                 "Verification passed without any code changes.")
+                save_fix("converged_no_changes")
                 await _fire_fix_callback(job, "passed",
                                          verdict={"note": "Converged with no code changes"})
                 return
@@ -147,12 +159,14 @@ async def _run(job: Job) -> None:
                                        "Gauntlet automated fix", body)
             await github.complete_check_run(gh, job.repo, check_id, "success",
                                             "Fix PR opened", f"Verified fix opened: {url}")
+            save_fix("converged", pr_url=url)
             await _fire_fix_callback(job, "passed",
                                      verdict={"note": "Fix PR opened", "pr_url": url,
                                               "changed_files": changed_files, "diff": result.diff[:40_000]})
         else:
             await github.complete_check_run(gh, job.repo, check_id, "neutral",
                                             "Could not fully verify a fix", report(result, before_verdict))
+            save_fix("not_converged")
             await _fire_fix_callback(job, "failed",
                                      error="Could not fully verify a fix (see the run's check on GitHub).")
     except Exception as e:
@@ -161,6 +175,24 @@ async def _run(job: Job) -> None:
         await _fire_fix_callback(job, "error", error=str(e))
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _persist_fix(job, *, status: str, iterations: int, before_verdict: str | None,
+                 verdict: dict | None, findings: list, trajectory: list,
+                 patch: str | None, pr_url: str | None = None) -> None:
+    """Best-effort: record the fixed run's trace, judge findings, and Codex patch to Supabase.
+    No-op when DATABASE_URL is unset; never breaks a fix run."""
+    from dataclasses import asdict
+
+    from gauntlet.store import store
+    try:
+        store().save_fix(
+            workflow_id=getattr(job, "workflow_id", None), repo=job.repo, sha=job.sha,
+            ref=job.ref, status=status, iterations=iterations, before_verdict=before_verdict,
+            verdict=verdict, findings=[asdict(f) for f in findings],
+            trajectory=trajectory, patch=patch, pr_url=pr_url)
+    except Exception as exc:
+        log.warning("save_fix failed workflow_id=%s: %s", getattr(job, "workflow_id", None), exc)
 
 
 async def _fire_fix_callback(job, status: str, *, verdict: dict | None = None,

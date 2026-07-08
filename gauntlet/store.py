@@ -145,6 +145,22 @@ class Store:
             f"created_at, finished_at from runs {where} order by created_at desc limit %s",
             (*params, limit), fetch="all")
 
+    # ---------- fixes (trace + judge findings + Codex patch) ----------
+
+    def save_fix(self, *, workflow_id: str | None, repo: str, sha: str, ref: str | None,
+                 status: str, iterations: int | None, before_verdict: str | None,
+                 verdict: dict | None, findings: list[dict] | None,
+                 trajectory: list[dict] | None, patch: str | None,
+                 pr_url: str | None = None) -> str | None:
+        row = self._exec(
+            "insert into fixes (workflow_id, repo, sha, ref, status, iterations, "
+            "before_verdict, verdict, findings, trajectory, patch, pr_url) "
+            "values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) returning id",
+            (workflow_id, repo, sha, ref, status, iterations, before_verdict,
+             _jsonb(verdict or {}), _jsonb(findings or []), _jsonb(trajectory or []),
+             patch, pr_url), fetch="one")
+        return str(row["id"]) if row else None
+
     # ---------- workflows ----------
 
     def save_workflows(self, *, user_id: str | None, drafts: list[dict]) -> list[str]:
