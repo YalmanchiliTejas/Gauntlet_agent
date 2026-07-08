@@ -28,6 +28,9 @@ Sender = Callable[[str], str]
 _OBS_CAP = 6000  # cap each observation fed back into the transcript
 _HIGH = {"failed_call", "retry_loop", "dangling_call",
          "fabricated_action", "result_mismatch", "untracked_failure"}
+# Wasteful-but-not-broken patterns: worth fixing (so the self-healing loop gates on them),
+# but not a correctness failure. Keeps redundant calls above the fixer's high|med threshold.
+_MED = {"redundant_call"}
 
 
 def _has_creds() -> bool:
@@ -35,12 +38,25 @@ def _has_creds() -> bool:
                ("GEMINI_API_KEY", "GAUNTLET_PLANNER_API_KEY", "OPENAI_API_KEY"))
 
 
+def _issue(f) -> dict:
+    return {"issue": f.detail, "evidence_steps": f.steps,
+            "severity": "high" if f.kind in _HIGH else ("med" if f.kind in _MED else "low"),
+            "recommendation": ""}
+
+
+def _merge_mechanical(issues: list[dict], steps) -> list[dict]:
+    """Fold in analyze()'s objective findings (redundant/failed/retry) so they're reported
+    even in LLM mode — the model routinely misses exact-duplicate calls that the rules catch."""
+    seen = {(i.get("issue"), tuple(i.get("evidence_steps") or [])) for i in issues}
+    extra = [_issue(f) for f in analyze(steps)
+             if (f.detail, tuple(f.steps)) not in seen]
+    return issues + extra
+
+
 def _deterministic(steps, vfindings) -> dict:
     """Verdict from rules alone — useful offline and when no LLM key is configured."""
     finds = analyze(steps) + vfindings
-    issues = [{"issue": f.detail, "evidence_steps": f.steps,
-               "severity": "high" if f.kind in _HIGH else "low",
-               "recommendation": ""} for f in finds]
+    issues = [_issue(f) for f in finds]
     verdict = "fail" if any(f.kind in _HIGH for f in finds) else ("warn" if finds else "pass")
     return {"verdict": verdict, "issues": issues, "steps": 0, "note": "deterministic (no LLM creds)"}
 
@@ -107,7 +123,11 @@ def judge(trace_path: str, sender: Sender | None = None, max_steps: int = 12,
                               "Reply with exactly one JSON tool or finish object.")
             continue
         if "finish" in action:
-            return {**action["finish"], "steps": step + 1}
+            result = {**action["finish"], "steps": step + 1}
+            # Guarantee the mechanical redundant/failed/retry findings are present even if the
+            # LLM overlooked them (it often misses exact-duplicate calls).
+            result["issues"] = _merge_mechanical(result.get("issues") or [], steps)
+            return result
         if "tool" in action:
             args = action.get("args", {})
             try:
@@ -122,7 +142,9 @@ def judge(trace_path: str, sender: Sender | None = None, max_steps: int = 12,
             transcript.append(f"Action: {json.dumps(action)}\nObservation:\n{obs[:_OBS_CAP]}")
             continue
         transcript.append("Observation: malformed action. Emit one tool or finish object.")
-    return {"verdict": "warn", "issues": [],
+    # Loop gave up without a finish (LLM misbehaving / calls failing). Still report the
+    # objective mechanical findings so redundant/failed/retry never silently vanish.
+    return {"verdict": "warn", "issues": _merge_mechanical([], steps),
             "steps": max_steps, "note": "step budget exhausted without finishing"}
 
 
