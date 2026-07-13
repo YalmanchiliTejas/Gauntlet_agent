@@ -137,7 +137,7 @@ def print_summary(result: dict[str, Any]) -> None:
         print(f"Surface: {workflow['surface_area']}")
         print(f"Interfaces: {', '.join(workflow.get('target_interfaces') or []) or '(unspecified)'}")
         print(f"Difficulty: {workflow['difficulty']}")
-        print(f"Task: {workflow['task_prompt']}")
+        print(f"User request: {workflow.get('user_prompt') or workflow['task_prompt']}")
         print("Success conditions:")
         for condition in workflow["success_conditions"]:
             print(f"  - {condition['description']} [{condition['evidence']}]")

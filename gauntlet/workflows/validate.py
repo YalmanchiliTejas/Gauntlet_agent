@@ -15,6 +15,10 @@ _ASSERTION_ANCHOR_RE = re.compile(
     r"gauntlet_|Example Domain|200|404)\b",
     re.IGNORECASE,
 )
+_HIDDEN_CONTRACT_RE = re.compile(
+    r"\b(rubric|test fixture|fixture|success condition|target interface|internal harness|implementation step)\b",
+    re.IGNORECASE,
+)
 
 
 def validate_workflow(
@@ -71,8 +75,11 @@ def validate_workflow(
     if _has_suspicious_undeclared_id(text_blob, {req.ref for req in workflow.seed_data}):
         issues.append(_issue("undeclared_identifier", "Workflow contains an ID-like value that is not declared as seed data.", workflow))
 
-    if len(workflow.task_prompt.split()) < 14:
-        issues.append(_issue("thin_task_prompt", "Task prompt is too short to be a real delegated workflow.", workflow))
+    visible_prompt = workflow.user_prompt or workflow.task_prompt
+    if len(visible_prompt.split()) < 14:
+        issues.append(_issue("thin_user_prompt", "User prompt is too short to be a real delegated workflow.", workflow))
+    if workflow.user_prompt and _HIDDEN_CONTRACT_RE.search(workflow.user_prompt):
+        issues.append(_issue("user_prompt_leaks_harness", "User prompt exposes hidden harness instructions or evaluation data.", workflow))
 
     if len(workflow.success_conditions) < 3:
         issues.append(_issue("missing_success_conditions", "Workflow needs at least three concrete success conditions.", workflow))

@@ -131,6 +131,20 @@ class WorkflowDraft:
         default_factory=lambda: ["gauntlet-native", "external-mcp-agent"]
     )
     selection_reason: str = ""
+    # Generated from documentation as a realistic end-user request. The harness
+    # keeps task_prompt, fixtures, and assertions private from the evaluated agent.
+    user_prompt: str = ""
+
+    def agent_input(self) -> dict[str, Any]:
+        """Return only data that the tested agent is allowed to receive."""
+        return {
+            "user_prompt": self.user_prompt or self.task_prompt,
+            "required_secrets": self.required_secrets,
+            "services": [
+                {"name": service.name, "mode": service.mode, "capabilities": service.capabilities}
+                for service in self.services
+            ],
+        }
 
 
 WorkflowContract = WorkflowDraft

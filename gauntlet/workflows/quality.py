@@ -16,7 +16,18 @@ def normalize_workflow_quality(workflow: WorkflowDraft) -> WorkflowDraft:
     workflow.quality_badges = _normalize_badges(workflow)
     workflow.expected_artifacts = _normalize_expected_artifacts(workflow)
     workflow.run_readiness = _normalize_run_readiness(workflow)
+    workflow.user_prompt = _normalize_user_prompt(workflow)
     return workflow
+
+
+def _normalize_user_prompt(workflow: WorkflowDraft) -> str:
+    if workflow.user_prompt.strip():
+        return workflow.user_prompt.strip()
+    description = workflow.description.strip().rstrip(".")
+    return (
+        f"Please help me with this request. {description} "
+        "Use the available tools and report the outcome with supporting evidence."
+    )
 
 
 def _normalize_rubric(workflow: WorkflowDraft) -> list[str]:

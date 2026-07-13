@@ -61,7 +61,9 @@ python scripts/generate_workflows.py \
   --count 5
 ```
 
-The generator decides whether to use LLM planning based on configured environment variables. If no LLM key is configured, it falls back to rules.
+The generator decides whether to use LLM planning based on configured environment variables. If no LLM key is configured, it falls back to rules. It derives a realistic synthetic user request from the documentation; customers do not need to provide a prompt.
+
+Generated workflows keep `user_prompt` separate from `task_prompt`. Send only `workflow.agent_input()` to an evaluated agent; the task brief, seed fixtures, success conditions, and rubric are harness-only oracle data.
 
 ### Gemini LLM Planner
 
